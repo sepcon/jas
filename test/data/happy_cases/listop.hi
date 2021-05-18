@@ -1,0 +1,35 @@
+{"@any_of":{"@list":{"@value_of":"list"},"@cond":{"@and":[{"@eq":[{"@plus":[{"@value_of":"int1"},{"@value_of":"int2"}]},2]},{"@lt":[{"@value_of":"string1"},{"@value_of":"string2"}]}]}}}
+{"list":[{"id":1,"int1":1,"int2":1,"string1":"1","string2":"2"}]}
+true
+{"@none_of":{"@list":"list","@cond":{"@and":[{"@eq":[{"@plus":[{"@value_of":"int1"},{"@value_of":"int2"}]},2]},{"@lt":[{"@value_of":"string1"},{"@value_of":"string2"}]}]}}}
+{"list":[{"id":1,"int1":1,"int2":1,"string1":"1","string2":"2"}]}
+false
+{"@all_of":{"@list":"list","@cond":{"@and":[{"@eq":[{"@plus":[{"@value_of":"int1"},{"@value_of":"int2"}]},2]},{"@lt":[{"@value_of":"string1"},{"@value_of":"string2"}]}]}}}
+{"list":[{"id":1,"int1":1,"int2":1,"string1":"1","string2":"2"}, {"id":1,"int1":1,"int2":1,"string1":"1","string2":"2"}]}
+true
+{"@all_of":{"@list":"list","@cond":{"@and":[{"@eq":[{"@plus":[{"@value_of":"int1"},{"@value_of":"int2"}]},2]},{"@lt":[{"@value_of":"string1"},{"@value_of":"string2"}]}]}}}
+{"list":[{"id":1,"int1":1,"int2":1,"string1":"1","string2":"2"}, {"id":1,"int1":1,"int2":1,"string1":"2","string2":"2"}]}
+false
+{"@size_of":"list"}
+{"list":[1,2,3,4,5]}
+5
+{"@any_of":true}
+[2]
+true
+{"@any_of":true}
+[]
+false
+{"@count_if":{"@list":"list","@cond":{"@eq":[1,{"@minus":[{"@value_of":"int2"},{"@value_of":"int1"}]}]}}}
+{"list":[{"id":1,"int1":1,"int2":2,"string1":"1","string2":"2"}, {"id":1,"int1":2,"int2":3,"string1":"2","string2":"2"}]}
+2
+{"@or": [false, false, false, {"@any_of":true}]}
+[1]
+true
+// this test is for making sure logical operator will return asap when evaluating a list of many arguments
+// with below case, `operation @any_of` wont need to be evaluated
+{"@and": [false, {"@any_of":{"@value_of":"helloworld"}}]}
+[1]
+false
+{"@or": [true, {"@any_of":{"@value_of":"helloworld"}}]}
+[1]
+true

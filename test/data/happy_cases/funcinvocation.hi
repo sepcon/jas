@@ -1,0 +1,6 @@
+{"@call" : "snchg"}
+{"id": "new_snapshot"}
+true
+{"@call" : "snchg"}
+null
+false

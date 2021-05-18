@@ -1,0 +1,12 @@
+{"@value_of":"id"}
+{"id":1,"int1":1,"int2":1,"string1":"1","string2":"2"}
+1
+{"@value_of":"string1"}
+{"id":1,"int1":1,"int2":1,"string1":"1","string2":"2"}
+"1"
+{"@value_of":{"@path":"string1","@snapshot":1}}
+{"id":1,"int1":1,"int2":1,"string1":"1","string2":"2"}
+"1"
+{"@value_of":{"@path":"string1","@snapshot":0}}
+{"id":1,"int1":1,"int2":1,"string1":"1","string2":"2"}
+null

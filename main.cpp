@@ -1,316 +1,89 @@
-#include <cctype>
 #include <fstream>
 #include <iostream>
 
-#include "D:\SourceCode\GitHub\json11\json11.hpp"
-#include "ctime"
-#include "jas_result_evaluator.h"
-#include "jas_syntax_generator.h"
-
-namespace jas {
-inline time_t current_time() { return std::time(nullptr); }
-
-template <class _transformer>
-string_type transform(string_type s, _transformer&& tr) {
-  std::transform(std::begin(s), std::end(s), std::begin(s), tr);
-  return s;
-}
-
-inline string_type tolower(string_type input) {
-  return transform(input, std::tolower);
-}
-
-inline string_type toupper(string_type input) {
-  return transform(input, std::toupper);
-}
-
-}  // namespace jas
+#include "Invocable.h"
+#include "JEvalContext.h"
+#include "Json.h"
+#include "SyntaxEvaluator.h"
+#include "SyntaxValidator.h"
 
 using namespace std;
-
 using namespace jas;
-using namespace sytax_dump;
 
-namespace jas {
+#include "Parser.h"
 
-struct my_trait {
-  using json_type = json11::Json;
-  using object_type = json_type::object;
-  using array_type = json_type::array;
-  using string_type = std::string;
-  template <typename T, typename = void>
-  struct Impl;
-
-  static bool is_null(const json_type& j) { return j.is_null(); }
-  static bool is_double(const json_type& j) { return j.is_number(); }
-  static bool is_int(const json_type& j) { return j.is_number(); }
-  static bool is_bool(const json_type& j) { return j.is_bool(); }
-  static bool is_string(const json_type& j) { return j.is_string(); }
-  static bool is_array(const json_type& j) { return j.is_array(); }
-  static bool is_object(const json_type& j) { return j.is_object(); }
-
-  static bool equal(const json_type& j1, const json_type& j2) {
-    return j1 == j2;
-  }
-
-  static bool empty(const json_type& j) { return j.is_null(); }
-
-  static size_t size(const json_type& j) {
-    if (j.is_object()) {
-      return j.object_items().size();
-    } else if (j.is_array()) {
-      return j.array_items().size();
-    } else {
-      return 0;
-    }
-  }
-
-  static size_t size(const array_type& arr) { return arr.size(); }
-
-  static size_t size(const object_type& o) { return o.size(); }
-
-  static json_type get(const json_type& j, const string_type& key) {
-    return j[key];
-  }
-
-  template <class T>
-  static T get(const json_type& j) {
-    return Impl<T>::get(j);
-  }
-
-  template <class T>
-  static T get(const json_type& j, const string_type& key) {
-    return Impl<T>::get(get(j, key));
-  }
-  template <class RawType, class Type>
-  using IsTypeOf = std::enable_if_t<
-      std::is_same_v<RawType, std::remove_cv_t<std::remove_reference_t<Type>>>,
-      void>;
-
-  template <>
-  struct Impl<bool> {
-    static bool get(const json_type& j) { return j.bool_value(); }
-  };
-
-  template <typename T>
-  struct Impl<T, std::enable_if_t<std::is_integral_v<T>, void>> {
-    static int get(const json_type& j) { return j.int_value(); }
-  };
-
-  template <>
-  struct Impl<double> {
-    static double get(const json_type& j) { return j.number_value(); }
-  };
-  template <class String>
-  struct Impl<String, IsTypeOf<std::string, String>> {
-    static String get(const json_type& j) { return j.string_value(); }
-  };
-
-  template <class Array>
-  struct Impl<Array, IsTypeOf<json_type::array, Array>> {
-    static json_type::array get(const json_type& j) { return j.array_items(); }
-  };
-
-  template <class JsonObject>
-  struct Impl<JsonObject, IsTypeOf<json_type::object, JsonObject>> {
-    static JsonObject get(const json_type& j) { return j.object_items(); }
-  };
-
-  static string_type dump(const json_type& j) { return j.dump(); }
-};
-
-template <class _json_trait>
-class json_context : public evaluation_context_base {
-  using jtrait_type = _json_trait;
-  using json_type = typename jtrait_type::json_type;
-  using jobject_type = typename jtrait_type::object_type;
-  using jarray_type = typename jtrait_type::array_type;
-  using jstring_type = typename jtrait_type::string_type;
-
- public:
-  using snapshot_idx = context_value_collector::snapshot_idx_val;
-  json_context(json_type new_snapshot, json_type old_snapshot = {})
-      : snapshots_{std::move(old_snapshot), std::move(new_snapshot)} {}
-
-  string_type dump() const override {
-    return "";  // jtrait_type::dump(snapshots_[snapshot_idx::new_snapshot_idx]);
-  }
-  virtual evaluated_value invoke_function(const string_type& /*function_name*/,
-                                          evaluated_value /*param*/) override {
-    return evaluated_value{current_time()};
-  }
-
-  virtual evaluated_value extract_value(const string_type& value_path,
-                                        size_t snapshot_idx) override {
-    if (snapshot_idx < 2) {
-      auto jval = jtrait_type::get(snapshots_[snapshot_idx], value_path);
-      return convert(jval);
-    }
-    return {};
-  }
-
-  virtual evaluation_contexts extract_sub_contexts(
-      const string_type& list_path, const string_type& item_id) override {
-    auto jnew_val =
-        jtrait_type::get(snapshots_[snapshot_idx::new_snapshot_idx], list_path);
-    auto jold_val =
-        jtrait_type::get(snapshots_[snapshot_idx::old_snapshot_idx], list_path);
-    evaluation_contexts ctxts;
-    auto new_list =
-        list_path.empty()
-            ? jtrait_type::template get<jarray_type>(
-                  snapshots_[snapshot_idx::new_snapshot_idx])
-            : jtrait_type::template get<jarray_type>(
-                  snapshots_[snapshot_idx::new_snapshot_idx], list_path);
-    auto old_list =
-        list_path.empty()
-            ? jtrait_type::template get<jarray_type>(
-                  snapshots_[snapshot_idx::old_snapshot_idx])
-            : jtrait_type::template get<jarray_type>(
-                  snapshots_[snapshot_idx::old_snapshot_idx], list_path);
-    auto find_item = [&item_id](const jarray_type& list,
-                                const json_type& item_id_val) {
-      for (auto& item : list) {
-        if (jtrait_type::equal(jtrait_type::get(item, item_id), item_id_val)) {
-          return item;
-        }
-      }
-      return json_type{};
-    };
-
-    if (!item_id.empty()) {
-      for (auto& new_item : new_list) {
-        auto old_item =
-            find_item(old_list, jtrait_type::get(new_item, item_id));
-        ctxts.emplace_back(new json_context{new_item, old_item});
-      }
-    } else {
-      auto old_list_size = jtrait_type::size(old_list);
-      auto new_list_size = jtrait_type::size(new_list);
-      jarray_type* longger_list = nullptr;
-      jarray_type* shorter_list = nullptr;
-      std::function<void(json_type, json_type)> add_ctxt;
-      if (old_list_size < new_list_size) {
-        shorter_list = &old_list;
-        longger_list = &new_list;
-        add_ctxt = [&ctxts](auto sitem, auto litem) {
-          ctxts.emplace_back(
-              new json_context{std::move(litem), std::move(sitem)});
-        };
-
-      } else {
-        shorter_list = &new_list;
-        longger_list = &old_list;
-        add_ctxt = [&ctxts](auto sitem, auto litem) {
-          ctxts.emplace_back(
-              new json_context{std::move(sitem), std::move(litem)});
-        };
-      }
-
-      auto siter = std::begin(*shorter_list);
-      auto liter = std::begin(*longger_list);
-      while (siter != std::end(*shorter_list)) {
-        add_ctxt(*siter, *liter);
-        ++siter;
-        ++liter;
-      }
-      while (liter != std::end(*longger_list)) {
-        add_ctxt(json_type{}, *liter);
-        ++liter;
-      }
-    }
-
-    return ctxts;
-  }
-
-  static evaluated_value convert(const json_type& jval) {
-    if (jtrait_type::is_int(jval)) {
-      return evaluated_value{jtrait_type::template get<int64_t>(jval)};
-    } else if (jtrait_type::is_double(jval)) {
-      return evaluated_value{jtrait_type::template get<double>(jval)};
-    } else if (jtrait_type::is_string(jval)) {
-      return evaluated_value{jtrait_type::template get<string_type>(jval)};
-    } else if (jtrait_type::is_bool(jval)) {
-      return evaluated_value{jtrait_type::template get<bool>(jval)};
-    } else {
-      return evaluated_value{};
-    }
-  }
-
- protected:
-  json_type snapshots_[2];
-};
-
-}  // namespace jas
-
-#include "jas_parser.h"
+OStream& operator<<(OStream& os, const DirectVal& e) {
+  os << JsonTrait::dump(e.value);
+  return os;
+}
 
 int main() {
   using namespace json11;
   string serr;
   auto jrules = Json::parse(
       R"(
-{"@none_of":{"@list_path":"","@item_id":"ID","@cond":{"@ge":[{"@ge":[{"@func":""},{"@key":"data_file_time"},{"@key":"data_file_time"}, 1, 2, 3]},259200]}}}
+{
+  "Backup": {
+    "#": "Backup",
+    "@any_of": {
+      "@list": "@value_of:BackupClient",
+      "@cond": {
+        "@lt": [
+          {
+            "@minus": [
+              "@current_time",
+              "@value_of:Last Backup Time"
+            ]
+          },
+          604800
+        ]
+      }
+    }
+  },
+
+  "lower": "@value_of:@toupper:Hello",
+  "report_if": "@evchg:#Backup"
+}
 )",
       serr);
 
-  auto joldDoc = Json::parse(R"(
-{"Antivirus":[{"Data File DateTime":"","Data File Engine Version":"","Data File Version":"","ID":11115,"IsDataFileDateTimeSupported":1,"IsLastFullScanTimeSupported":0,"IsRunningSupported":1,"Last Full Scan Time":"","PRODUCT_NAME":"Norton Security Scan","Running":0,"Threats":[],"VENDOR":"Symantec Corporation","VERSION":""},{"Data File DateTime":"2021/4/1 14:49:8","Data File Engine Version":"1.1.17900.7","Data File Version":"1.333.1767.0","ID":477,"IsDataFileDateTimeSupported":1,"IsLastFullScanTimeSupported":1,"IsRunningSupported":1,"Last Full Scan Time":"","PRODUCT_NAME":"Windows Defender","Running":1,"Threats":[],"VENDOR":"Microsoft Corporation","VERSION":"4.18.2102.4"}]}
-)",
+  auto joldDoc = Json::parse(R"_json(
+{"HELLO": "World", "Antiphishing":[{"Enabled":1,"ID":102,"IsEnabledSupported":1,"PRODUCT_NAME":"Internet Explorer (x64)","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"Enabled":1,"ID":3103,"IsEnabledSupported":1,"PRODUCT_NAME":"Microsoft Edge","VENDOR":"Microsoft Corporation","VERSION":"91.0.864.37"},{"Enabled":1,"ID":103,"IsEnabledSupported":1,"PRODUCT_NAME":"Internet Explorer (x86)","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"AR_ID":"41","Enabled":0,"ID":41,"IsEnabledSupported":1,"PRODUCT_NAME":"Google Chrome","VENDOR":"Google Inc.","VERSION":"90.0.4430.212"}],"Antivirus":[{"Data File DateTime":"2021/5/30 15:11:32","Data File Engine Version":"1.1.18100.6","Data File Version":"1.339.1690.0","ID":477,"IsDataFileDateTimeSupported":1,"IsLastFullScanTimeSupported":1,"IsRunningSupported":1,"Last Full Scan Time":"2021/5/29 19:31:7","PRODUCT_NAME":"Windows Defender","Running":1,"Threats":[],"VENDOR":"Microsoft Corporation","VERSION":"4.18.2104.14"}],"BackupClient":[{"ID":935,"IsLastBackupTimeSupported":1,"Is_Cloud_Storage":0,"Last Backup Time":"","PRODUCT_NAME":"Windows Backup and Restore","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":936,"IsLastBackupTimeSupported":1,"Is_Cloud_Storage":0,"Last Backup Time":"","PRODUCT_NAME":"Windows File History","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}],"Browser":[{"ID":102,"PRODUCT_NAME":"Internet Explorer","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"ID":3103,"PRODUCT_NAME":"Microsoft Edge","VENDOR":"Microsoft Corporation","VERSION":"91.0.864.37"},{"ID":103,"PRODUCT_NAME":"Internet Explorer","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"AR_ID":"41","ID":41,"PRODUCT_NAME":"Google Chrome","VENDOR":"Google Inc.","VERSION":"90.0.4430.212"}],"Cleaner_Optimizer":[],"Cloud_Storage":[],"CustomCheck":[{"hash":"cfe9919aff46c80210c4de472ca63873","last_run":"2021-05-30T17:26:32Z","last_update":"","msg":"[Sun May 30 11:26:26 2021] Job list: Definitions_Update Enable_Defender Startup_Quick_Scan Weekly_Full_Scan Windows_Update [Sun May 30 11:26:26 2021] > Windows_Update job already exists     - OVERWRITE = FALSE [Sun May 30 11:26:26 2021] > Enable_Defender job already exists    - OVERWRITE = FALSE [Sun May 30 11:26:26 2021] > Startup_Quick_Scan job already exists - OVERWRITE = FALSE [Sun May 30 11:26:26 2021] > Weekly_Full_Scan job already exists   - OVERWRITE = TRUE [Sun May 30 11:26:26 2021] > Weekly_Full_Scan job   UNREGISTERED [Sun May 30 11:26:27 2021] Job list: Definitions_Update Enable_Defender Startup_Quick_Scan Windows_Update [Sun May 30 11:26:27 2021] > Weekly_Full_Scan job does not exist [Sun May 30 11:26:27 2021] > Weekly_Full_Scan job   CREATED [Sun May 30 11:26:28 2021] > Weekly_Full_Scan task  RUN AS SYSTEM [Sun May 30 11:26:29 2021] Job list: Definitions_Update Enable_Defender Startup_Quick_Scan Weekly_Full_Scan Windows_Update [Sun May 30 11:26:29 2021] > Definitions_Update job already exists - OVERWRITE = FALSE [Sun May 30 11:26:29 2021] > Chrome settings are CORRECT [Sun May 30 11:26:29 2021] > Edge settings are CORRECT [Sun May 30 11:26:29 2021] > Firefox is NOT INSTALLED [Sun May 30 11:26:29 2021] > Outlook-Skype settings are CORRECT   Script Completed with 228 Errors.","status":1}],"Data_Loss_Prevention":[],"Developer_Tool":[],"Firewall":[{"Enabled":0,"ID":288,"IsEnabledSupported":1,"PRODUCT_NAME":"Windows Firewall","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}],"Hard_Disk_Encryption":{"SystemVolume":"C:\\WINDOWS\\system32","isGenericSystemVolumeEncrypted":false,"products":[{"Encrypted_Volumes":{"C:":{"Decryption_In_Progress":{"ENCRYPTIONPROGRESS":0},"Encryption_Algorithm":{"Algorithm":"aes","Key_Length":128,"Mode_of_Operation":0},"Encryption_In_Progress":{"ENCRYPTIONPROGRESS":0},"Encryption_State":{"ENCRYPTIONSTATE":2},"Location_Encryptable":true,"Location_Type":"physical"}},"EncryptionStateSupported":0,"ID":882,"PRODUCT_NAME":"BitLocker Drive Encryption","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}]},"Instant_Messegener":[{"ID":1056,"PRODUCT_NAME":"Microsoft Lync ","Status":1,"VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":2059,"PRODUCT_NAME":"Slack","Status":2,"VENDOR":"Slack Technologies, Inc.","VERSION":"4.16.1"},{"ID":1872,"PRODUCT_NAME":"Zoom","Status":1,"VENDOR":"Zoom Video Communications, Inc.","VERSION":"5.4.9"},{"ID":3063,"PRODUCT_NAME":"Telegram","Status":1,"VENDOR":"Telegram Messenger LLP","VERSION":"2.5.1"},{"ID":3089,"PRODUCT_NAME":"Microsoft Teams","Status":2,"VENDOR":"Microsoft Corporation","VERSION":"1.4.00.11161"}],"Media_Player":[],"Operating_System_Info":[{"ActiveUserSession":0,"Domain":"us.opswat.com","Last_Reboot":1620910884,"Last_Windows_Update_Check":"","LockScreenTimeout":300,"MachineType":1,"Network_adapters":{"Network_adapter 1":{"IPV4":"","IPV6":"","MAC":"00:FF:2A:35:43:8F","adapter_enabled":false,"description":"TAP-Windows Adapter V9","dhcp_enabled":false,"media_state":"media_disconnected"},"Network_adapter 2":{"IPV4":"","IPV6":"","MAC":"4C:EB:BD:68:3F:0C","adapter_enabled":false,"description":"Bluetooth Device (Personal Area Network)","dhcp_enabled":true,"media_state":"media_disconnected"},"Network_adapter 3":{"IPV4":"","IPV6":"","MAC":"98:FC:84:EC:64:16","adapter_enabled":false,"description":"Realtek USB GbE Family Controller","dhcp_enabled":true,"media_state":"media_disconnected"},"Network_adapter 4":{"IPV4":"192.168.0.16","IPV6":"","MAC":"4C:EB:BD:68:3F:0B","adapter_enabled":true,"default_gateways":["192.168.0.1"],"description":"Qualcomm QCA61x4A 802.11ac Wireless Adapter","dhcp_enabled":true,"dhcp_lease_expires":"1622481395","dhcp_lease_obtained":"1622394995","dhcp_server_address":"192.168.0.1","dns_server_addresses":["24.116.0.53","24.116.2.50"],"media_state":"connected","subnet_masks":["255.255.255.0"]},"Network_adapter 5":{"IPV4":"","IPV6":"","MAC":"34:48:ED:33:0A:31","adapter_enabled":false,"description":"Intel(R) Ethernet Connection (6) I219-LM","dhcp_enabled":true,"media_state":"media_disconnected"}},"OS_Architecture":"64-bit","OS_Family":"Windows","OS_Id":"60","OS_Language":"English (United States)","OS_Name":"Microsoft Windows 10 Pro","OS_Vendor":"Microsoft Corp.","OS_Version":"10.0.19042","Service_Pack_Version":"0.0","SysVolumeFree":"312GB","SysVolumeTotal":"476GB","SystemVolume":"C:\\WINDOWS\\system32","UserPasswordSet":1,"Username":"ttruong"}],"PUA":[{"ID":3346,"PRODUCT_NAME":"TeamViewer","VENDOR":"TeamViewer GmbH","VERSION":"15.15.5"},{"ID":1872,"PRODUCT_NAME":"Zoom","VENDOR":"Zoom Video Communications, Inc.","VERSION":"5.4.9"}],"PublicFileSharing":[{"Status":0}],"Recording_Web_Meeting":[],"Remote_Control":[{"ID":1872,"PRODUCT_NAME":"Zoom","Status":1,"VENDOR":"Zoom Video Communications, Inc.","VERSION":"5.4.9"},{"AR_ID":"815","ID":815,"PRODUCT_NAME":"PuTTY","Status":1,"VENDOR":"PuTTY","VERSION":"0.74"},{"ID":3059,"PRODUCT_NAME":"Remote Desktop Connection","Status":1,"VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":3090,"PRODUCT_NAME":"GoToMeeting","Status":1,"VENDOR":"LogMeIn, Inc.","VERSION":"10.16.1.19709"},{"ID":3346,"PRODUCT_NAME":"TeamViewer","Status":1,"VENDOR":"TeamViewer GmbH","VERSION":"15.15.5"},{"ID":3124,"PRODUCT_NAME":"VMware Horizon Client","Status":1,"VENDOR":"VMware, Inc.","VERSION":"8.2.0.18176"}],"Toolbars":[],"Unclassified":[{"AR_ID":"108","ID":108,"PRODUCT_NAME":"WinRAR (x64)","VENDOR":"Alexander Roshal","VERSION":"5.91.0"},{"ID":1152,"PRODUCT_NAME":"Microsoft PowerPoint","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":2819,"PRODUCT_NAME":"Adobe Acrobat Reader DC Continuous","VENDOR":"Adobe Systems Inc.","VERSION":"21.001.20155"},{"ID":1151,"PRODUCT_NAME":"Microsoft Publisher","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":1214,"PRODUCT_NAME":"Microsoft Excel","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":3102,"PRODUCT_NAME":"Teams Machine-Wide Installer","VENDOR":"Microsoft Corporation","VERSION":"1.4.0.7174"},{"ID":1153,"PRODUCT_NAME":"Microsoft Outlook","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":1154,"PRODUCT_NAME":"Microsoft OneNote","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":1527,"PRODUCT_NAME":"Total Commander (x64)","VENDOR":"Ghisler Software GmbH","VERSION":"9.51"},{"ID":1634,"PRODUCT_NAME":"Windows Media Player","VENDOR":"Microsoft Corporation","VERSION":"12.0.19041.1"},{"ID":1225,"PRODUCT_NAME":"Microsoft Word","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"AR_ID":"303","ID":303,"PRODUCT_NAME":"Notepad++ (x86)","VENDOR":"Notepad++ Team","VERSION":"7.9.1"},{"AR_ID":"200","ID":200,"PRODUCT_NAME":"7-Zip (x64)","VENDOR":"Igor Pavlov","VERSION":"19.00"},{"AR_ID":"211","ID":211,"PRODUCT_NAME":"Wireshark (x64)","VENDOR":"The Wireshark developer community","VERSION":"3.4.5"},{"ID":3306,"PRODUCT_NAME":"DirectX","VENDOR":"Microsoft Corporation","VERSION":"12"},{"ID":2807,"PRODUCT_NAME":"Notepad","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":2815,"PRODUCT_NAME":"Paint","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":2925,"PRODUCT_NAME":"WordPad","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":3029,"PRODUCT_NAME":"Microsoft Office 365","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":3000,"PRODUCT_NAME":"OPSWAT Client","VENDOR":"OPSWAT, Inc.","VERSION":"7.6.455.0"},{"ID":3109,"PRODUCT_NAME":"Microsoft .NET Framework 4","VENDOR":"Microsoft Corporation","VERSION":"4.8.4084.0"},{"ID":3123,"PRODUCT_NAME":"Microsoft XML Parser 3","VENDOR":"Microsoft Corporation","VERSION":"8.110.19041.844"},{"ID":3202,"PRODUCT_NAME":"Microsoft Visual Studio Code (User)","VENDOR":"Microsoft Corporation","VERSION":"1.51.0"},{"ID":3259,"PRODUCT_NAME":"Microsoft Visual C++ 2015-2019 Redistributable (x64)","VENDOR":"Microsoft Corporation","VERSION":"14.28.29910.0"},{"ID":3205,"PRODUCT_NAME":"Microsoft XML Parser 6","VENDOR":"Microsoft Corporation","VERSION":"6.30.19041.906"},{"ID":3228,"PRODUCT_NAME":"Python 2.7 64-bit","VENDOR":"Python Software Foundation","VERSION":"2.7.17"},{"ID":3258,"PRODUCT_NAME":"Microsoft Visual C++ 2015-2019 Redistributable (x86)","VENDOR":"Microsoft Corporation","VERSION":"14.27.29016.0"},{"ID":3340,"PRODUCT_NAME":"Node.js Current","VENDOR":"Joyent, Inc.","VERSION":"15.5.1"}],"Unclassified_PUA":[],"Uninstaller":[],"VPN_Client":[{"ID":1119,"PRODUCT_NAME":"Windows VPN Client","Status":1,"VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}],"Virtual_Machine":[]}
+)_json",
                              serr);
 
-  auto jnewDoc = Json::parse(R"(
-{"Antivirus":[{"data_file_time":1620779950,"Data File DateTime":"","Data File Engine Version":"","Data File Version":"","ID":1115,"IsDataFileDateTimeSupported":1,"IsLastFullScanTimeSupported":0,"IsRunningSupported":0,"Last Full Scan Time":"","PRODUCT_NAME":"Norton Security Scan","Running":0,"Threats":[],"VENDOR":"Symantec Corporation","VERSION":""},{"data_file_time":1621064816,"Data File DateTime":"","Data File Engine Version":"","Data File Version":"","ID":11125,"IsDataFileDateTimeSupported":1,"IsLastFullScanTimeSupported":0,"IsRunningSupported":0,"Last Full Scan Time":"","PRODUCT_NAME":"Norton Security Scan","Running":0,"Threats":[],"VENDOR":"Symantec Corporation","VERSION":""}]}
-)",
+  auto jnewDoc = Json::parse(R"_json(
+{"Antiphishing":[{"Enabled":1,"ID":102,"IsEnabledSupported":2,"PRODUCT_NAME":"Internet Explorer (x64)","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"Enabled":1,"ID":3103,"IsEnabledSupported":1,"PRODUCT_NAME":"Microsoft Edge","VENDOR":"Microsoft Corporation","VERSION":"91.0.864.37"},{"Enabled":1,"ID":103,"IsEnabledSupported":1,"PRODUCT_NAME":"Internet Explorer (x86)","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"AR_ID":"41","Enabled":1,"ID":41,"IsEnabledSupported":1,"PRODUCT_NAME":"Google Chrome","VENDOR":"Google Inc.","VERSION":"90.0.4430.212"}],"Antivirus":[{"Data File DateTime":"2021/5/30 15:11:32","Data File Engine Version":"1.1.18100.6","Data File Version":"1.339.1690.0","ID":477,"IsDataFileDateTimeSupported":1,"IsLastFullScanTimeSupported":1,"IsRunningSupported":1,"Last Full Scan Time":"2021/5/29 19:31:7","PRODUCT_NAME":"Windows Defender","Running":1,"Threats":[],"VENDOR":"Microsoft Corporation","VERSION":"4.18.2104.14"}],"BackupClient":[{"ID":935,"IsLastBackupTimeSupported":1,"Is_Cloud_Storage":0,"Last Backup Time":1622440012,"PRODUCT_NAME":"Windows Backup and Restore","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":936,"IsLastBackupTimeSupported":1,"Is_Cloud_Storage":0,"Last Backup Time":"","PRODUCT_NAME":"Windows File History","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}],"Browser":[{"ID":102,"PRODUCT_NAME":"Internet Explorer","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"ID":3103,"PRODUCT_NAME":"Microsoft Edge","VENDOR":"Microsoft Corporation","VERSION":"91.0.864.37"},{"ID":103,"PRODUCT_NAME":"Internet Explorer","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"AR_ID":"41","ID":41,"PRODUCT_NAME":"Google Chrome","VENDOR":"Google Inc.","VERSION":"90.0.4430.212"}],"Cleaner_Optimizer":[],"Cloud_Storage":[],"CustomCheck":[{"hash":"cfe9919aff46c80210c4de472ca63873","last_run":"2021-05-30T17:26:32Z","last_update":"","msg":"[Sun May 30 11:26:26 2021] Job list: Definitions_Update Enable_Defender Startup_Quick_Scan Weekly_Full_Scan Windows_Update [Sun May 30 11:26:26 2021] > Windows_Update job already exists     - OVERWRITE = FALSE [Sun May 30 11:26:26 2021] > Enable_Defender job already exists    - OVERWRITE = FALSE [Sun May 30 11:26:26 2021] > Startup_Quick_Scan job already exists - OVERWRITE = FALSE [Sun May 30 11:26:26 2021] > Weekly_Full_Scan job already exists   - OVERWRITE = TRUE [Sun May 30 11:26:26 2021] > Weekly_Full_Scan job   UNREGISTERED [Sun May 30 11:26:27 2021] Job list: Definitions_Update Enable_Defender Startup_Quick_Scan Windows_Update [Sun May 30 11:26:27 2021] > Weekly_Full_Scan job does not exist [Sun May 30 11:26:27 2021] > Weekly_Full_Scan job   CREATED [Sun May 30 11:26:28 2021] > Weekly_Full_Scan task  RUN AS SYSTEM [Sun May 30 11:26:29 2021] Job list: Definitions_Update Enable_Defender Startup_Quick_Scan Weekly_Full_Scan Windows_Update [Sun May 30 11:26:29 2021] > Definitions_Update job already exists - OVERWRITE = FALSE [Sun May 30 11:26:29 2021] > Chrome settings are CORRECT [Sun May 30 11:26:29 2021] > Edge settings are CORRECT [Sun May 30 11:26:29 2021] > Firefox is NOT INSTALLED [Sun May 30 11:26:29 2021] > Outlook-Skype settings are CORRECT   Script Completed with 228 Errors.","status":1}],"Data_Loss_Prevention":[],"Developer_Tool":[],"Firewall":[{"Enabled":1,"ID":288,"IsEnabledSupported":1,"PRODUCT_NAME":"Windows Firewall","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}],"Hard_Disk_Encryption":{"SystemVolume":"C:\\WINDOWS\\system32","isGenericSystemVolumeEncrypted":false,"products":[{"Encrypted_Volumes":{"C:":{"Decryption_In_Progress":{"ENCRYPTIONPROGRESS":0},"Encryption_Algorithm":{"Algorithm":"aes","Key_Length":128,"Mode_of_Operation":0},"Encryption_In_Progress":{"ENCRYPTIONPROGRESS":0},"Encryption_State":{"ENCRYPTIONSTATE":2},"Location_Encryptable":true,"Location_Type":"physical"}},"EncryptionStateSupported":0,"ID":882,"PRODUCT_NAME":"BitLocker Drive Encryption","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}]},"Instant_Messegener":[{"ID":1056,"PRODUCT_NAME":"Microsoft Lync ","Status":1,"VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":2059,"PRODUCT_NAME":"Slack","Status":2,"VENDOR":"Slack Technologies, Inc.","VERSION":"4.16.1"},{"ID":1872,"PRODUCT_NAME":"Zoom","Status":1,"VENDOR":"Zoom Video Communications, Inc.","VERSION":"5.4.9"},{"ID":3063,"PRODUCT_NAME":"Telegram","Status":1,"VENDOR":"Telegram Messenger LLP","VERSION":"2.5.1"},{"ID":3089,"PRODUCT_NAME":"Microsoft Teams","Status":2,"VENDOR":"Microsoft Corporation","VERSION":"1.4.00.11161"}],"Media_Player":[],"Operating_System_Info":[{"ActiveUserSession":0,"Domain":"us.opswat.com","Last_Reboot":1620910884,"Last_Windows_Update_Check":"","LockScreenTimeout":300,"MachineType":1,"Network_adapters":{"Network_adapter 1":{"IPV4":"","IPV6":"","MAC":"00:FF:2A:35:43:8F","adapter_enabled":false,"description":"TAP-Windows Adapter V9","dhcp_enabled":false,"media_state":"media_disconnected"},"Network_adapter 2":{"IPV4":"","IPV6":"","MAC":"4C:EB:BD:68:3F:0C","adapter_enabled":false,"description":"Bluetooth Device (Personal Area Network)","dhcp_enabled":true,"media_state":"media_disconnected"},"Network_adapter 3":{"IPV4":"","IPV6":"","MAC":"98:FC:84:EC:64:16","adapter_enabled":false,"description":"Realtek USB GbE Family Controller","dhcp_enabled":true,"media_state":"media_disconnected"},"Network_adapter 4":{"IPV4":"192.168.0.16","IPV6":"","MAC":"4C:EB:BD:68:3F:0B","adapter_enabled":true,"default_gateways":["192.168.0.1"],"description":"Qualcomm QCA61x4A 802.11ac Wireless Adapter","dhcp_enabled":true,"dhcp_lease_expires":"1622481395","dhcp_lease_obtained":"1622394995","dhcp_server_address":"192.168.0.1","dns_server_addresses":["24.116.0.53","24.116.2.50"],"media_state":"connected","subnet_masks":["255.255.255.0"]},"Network_adapter 5":{"IPV4":"","IPV6":"","MAC":"34:48:ED:33:0A:31","adapter_enabled":false,"description":"Intel(R) Ethernet Connection (6) I219-LM","dhcp_enabled":true,"media_state":"media_disconnected"}},"OS_Architecture":"64-bit","OS_Family":"Windows","OS_Id":"60","OS_Language":"English (United States)","OS_Name":"Microsoft Windows 10 Pro","OS_Vendor":"Microsoft Corp.","OS_Version":"10.0.19042","Service_Pack_Version":"0.0","SysVolumeFree":"312GB","SysVolumeTotal":"476GB","SystemVolume":"C:\\WINDOWS\\system32","UserPasswordSet":1,"Username":"ttruong"}],"PUA":[{"ID":3346,"PRODUCT_NAME":"TeamViewer","VENDOR":"TeamViewer GmbH","VERSION":"15.15.5"},{"ID":1872,"PRODUCT_NAME":"Zoom","VENDOR":"Zoom Video Communications, Inc.","VERSION":"5.4.9"}],"PublicFileSharing":[{"Status":0}],"Recording_Web_Meeting":[],"Remote_Control":[{"ID":1872,"PRODUCT_NAME":"Zoom","Status":1,"VENDOR":"Zoom Video Communications, Inc.","VERSION":"5.4.9"},{"AR_ID":"815","ID":815,"PRODUCT_NAME":"PuTTY","Status":1,"VENDOR":"PuTTY","VERSION":"0.74"},{"ID":3059,"PRODUCT_NAME":"Remote Desktop Connection","Status":1,"VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":3090,"PRODUCT_NAME":"GoToMeeting","Status":1,"VENDOR":"LogMeIn, Inc.","VERSION":"10.16.1.19709"},{"ID":3346,"PRODUCT_NAME":"TeamViewer","Status":1,"VENDOR":"TeamViewer GmbH","VERSION":"15.15.5"},{"ID":3124,"PRODUCT_NAME":"VMware Horizon Client","Status":1,"VENDOR":"VMware, Inc.","VERSION":"8.2.0.18176"}],"Toolbars":[],"Unclassified":[{"AR_ID":"108","ID":108,"PRODUCT_NAME":"WinRAR (x64)","VENDOR":"Alexander Roshal","VERSION":"5.91.0"},{"ID":1152,"PRODUCT_NAME":"Microsoft PowerPoint","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":2819,"PRODUCT_NAME":"Adobe Acrobat Reader DC Continuous","VENDOR":"Adobe Systems Inc.","VERSION":"21.001.20155"},{"ID":1151,"PRODUCT_NAME":"Microsoft Publisher","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":1214,"PRODUCT_NAME":"Microsoft Excel","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":3102,"PRODUCT_NAME":"Teams Machine-Wide Installer","VENDOR":"Microsoft Corporation","VERSION":"1.4.0.7174"},{"ID":1153,"PRODUCT_NAME":"Microsoft Outlook","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":1154,"PRODUCT_NAME":"Microsoft OneNote","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":1527,"PRODUCT_NAME":"Total Commander (x64)","VENDOR":"Ghisler Software GmbH","VERSION":"9.51"},{"ID":1634,"PRODUCT_NAME":"Windows Media Player","VENDOR":"Microsoft Corporation","VERSION":"12.0.19041.1"},{"ID":1225,"PRODUCT_NAME":"Microsoft Word","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"AR_ID":"303","ID":303,"PRODUCT_NAME":"Notepad++ (x86)","VENDOR":"Notepad++ Team","VERSION":"7.9.1"},{"AR_ID":"200","ID":200,"PRODUCT_NAME":"7-Zip (x64)","VENDOR":"Igor Pavlov","VERSION":"19.00"},{"AR_ID":"211","ID":211,"PRODUCT_NAME":"Wireshark (x64)","VENDOR":"The Wireshark developer community","VERSION":"3.4.5"},{"ID":3306,"PRODUCT_NAME":"DirectX","VENDOR":"Microsoft Corporation","VERSION":"12"},{"ID":2807,"PRODUCT_NAME":"Notepad","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":2815,"PRODUCT_NAME":"Paint","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":2925,"PRODUCT_NAME":"WordPad","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":3029,"PRODUCT_NAME":"Microsoft Office 365","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":3000,"PRODUCT_NAME":"OPSWAT Client","VENDOR":"OPSWAT, Inc.","VERSION":"7.6.455.0"},{"ID":3109,"PRODUCT_NAME":"Microsoft .NET Framework 4","VENDOR":"Microsoft Corporation","VERSION":"4.8.4084.0"},{"ID":3123,"PRODUCT_NAME":"Microsoft XML Parser 3","VENDOR":"Microsoft Corporation","VERSION":"8.110.19041.844"},{"ID":3202,"PRODUCT_NAME":"Microsoft Visual Studio Code (User)","VENDOR":"Microsoft Corporation","VERSION":"1.51.0"},{"ID":3259,"PRODUCT_NAME":"Microsoft Visual C++ 2015-2019 Redistributable (x64)","VENDOR":"Microsoft Corporation","VERSION":"14.28.29910.0"},{"ID":3205,"PRODUCT_NAME":"Microsoft XML Parser 6","VENDOR":"Microsoft Corporation","VERSION":"6.30.19041.906"},{"ID":3228,"PRODUCT_NAME":"Python 2.7 64-bit","VENDOR":"Python Software Foundation","VERSION":"2.7.17"},{"ID":3258,"PRODUCT_NAME":"Microsoft Visual C++ 2015-2019 Redistributable (x86)","VENDOR":"Microsoft Corporation","VERSION":"14.27.29016.0"},{"ID":3340,"PRODUCT_NAME":"Node.js Current","VENDOR":"Joyent, Inc.","VERSION":"15.5.1"}],"Unclassified_PUA":[],"Uninstaller":[],"VPN_Client":[{"ID":1119,"PRODUCT_NAME":"Windows VPN Client","Status":1,"VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}],"Virtual_Machine":[]}
+)_json",
                              serr);
-  std::ofstream ofs{"error.log"};
 
-  try {
-    auto evaluable = parser<my_trait>::parse(jrules);
-    cout << "Genrated syntax: " << endl;
-    ostringstream_type oss;
-    ofs << *evaluable;
-    oss << *evaluable;
-    cout << oss.str();
-    auto context =
-        make_shared<json_context<my_trait>>(jnewDoc["Antivirus"] /*, joldDoc*/);
-    syntax_evaluator evaluator(context);
-    evaluable->accept(&evaluator);
+  auto eval = [](EvaluablePtr evaluable, Json doc,
+                 JEvalContext::EvalHistoryPtr his = nullptr) {
+    auto context = make_shared<JEvalContext>(nullptr, doc);
+    context->setEvalHistory(his);
     cout << "-------------------\n";
-    cout << "evaluated result =" << evaluator.evaluated_result() << endl;
-  } catch (const exception_base& e) {
-    cout << e.what() << endl;
-  }
-  return 0;
-
-  auto o = make_op(
-      list_operation_type::any_of,
-      make_op(arithmetic_operator_type::modulus,
-              {make_op(arithmetic_operator_type::plus,
-                       vector<shared_ptr<evaluable_base>>{
-                           make_op(arithmetic_operator_type::divides,
-                                   {make_ctxt_value_collector("date_of_birth"),
-                                    2_const}),
-                           20_const,
-                           make_op(arithmetic_operator_type::negate,
-                                   {10_const, 23_const})}),
-               2_const}),
-      "hello world");
-
-  auto c = "21/08/1991"_const;
-
-  Json data = Json::object{
-      {"hello world", Json::array{Json::object{{"date_of_birth", 10}}}}};
+    cout << "Evaluated value ="
+         << SyntaxEvaluator{}.evaluate(evaluable, context) << endl;
+    return context->evalHistory();
+  };
 
   try {
-    syntax_evaluator e(make_shared<json_context<my_trait>>(/*Json{},*/ data));
-    ostringstream_type oss;
-    oss << o;
-    cout << oss.str();
-    o->accept(&e);
-    cout << e.evaluated_result() << endl;
-  } catch (const exception_base& e) {
-    cout << "got exception: " << typeid(e).name() << "\n" << e.what() << endl;
+    auto evaluable = parser::parse(jrules);
+    SyntaxValidator validator;
+    validator.validate(evaluable);
+    cout << validator.get_report() << endl;
+    JEvalContext::EvalHistoryPtr his;
+    his = eval(evaluable, joldDoc);
+    //    his = eval(evaluable, jnewDoc, his);
+    //    his = eval(evaluable, jnewDoc, his);
+    //    his = eval(evaluable, joldDoc, his);
+    //    his = eval(evaluable, joldDoc, his);
+    //    his = eval(evaluable, joldDoc, his);
+    //    his = eval(evaluable, joldDoc, his);
+    //    his = eval(evaluable, joldDoc, his);
+    //    his = eval(evaluable, joldDoc, his);
+  } catch (const ExceptionBase& e) {
+    cout << "\nGot exception: " << e.what() << endl;
   }
   return 0;
 }
