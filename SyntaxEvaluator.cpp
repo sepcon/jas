@@ -290,9 +290,13 @@ inline void SyntaxEvaluatorImpl::eval(const DirectVal& v) {
 inline void SyntaxEvaluatorImpl::eval(const EvaluableMap& v) {
   JsonTrait::Object evaluated;
   for (auto& [key, val] : v.value) {
-    val->accept(this);
-    evaluated.emplace(key, std::move(stackTopLastElem().value));
-    stackTopFrame().evaluatedVals.pop_back();
+    try {
+      val->accept(this);
+      evaluated.emplace(key, std::move(stackTopLastElem().value));
+      stackTopFrame().evaluatedVals.pop_back();
+    } catch (const EvaluationError&) {
+      evaluated.emplace(key, Json{});
+    }
   }
   stackTopAddVal({std::move(evaluated)});
 }
@@ -300,9 +304,13 @@ inline void SyntaxEvaluatorImpl::eval(const EvaluableMap& v) {
 inline void SyntaxEvaluatorImpl::eval(const EvaluableArray& v) {
   JsonTrait::Array evaluated;
   for (auto& val : v.value) {
-    val->accept(this);
-    evaluated.push_back(std::move(stackTopLastElem().value));
-    stackTopFrame().evaluatedVals.pop_back();
+    try {
+      val->accept(this);
+      evaluated.push_back(std::move(stackTopLastElem().value));
+      stackTopFrame().evaluatedVals.pop_back();
+    } catch (const EvaluationError&) {
+      evaluated.emplace_back(Json{});
+    }
   }
   stackTopAddVal(std::move(evaluated));
 }
@@ -488,7 +496,9 @@ inline void SyntaxEvaluatorImpl::eval(const Function& func) {
 }
 
 inline void SyntaxEvaluatorImpl::eval(const ContextVal& fc) {
-  stackTopAddVal(stackTopContext()->snapshotValue(fc.path, fc.snapshot), fc);
+  auto path = evaluateOne(fc.path);
+  evalThrowIf<EvaluationError>(!path.isType<String>());
+  stackTopAddVal(stackTopContext()->snapshotValue(path, fc.snapshot), fc);
 }
 
 void SyntaxEvaluatorImpl::eval(const Property& prop) {

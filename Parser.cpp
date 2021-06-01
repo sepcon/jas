@@ -1,5 +1,6 @@
 #include "Parser.h"
 
+#include <iostream>
 #include <map>
 #include <optional>
 #include <vector>
@@ -31,14 +32,21 @@ T jsonGet(const Json& j, const String& key);
 bool jsonHasKey(const Json& j, const String& key);
 Json jsonGet(const Json& j, const String& key);
 
+static bool isSpecifierLike(const StringView& expression);
+static bool isSpecifier(const StringView& expression);
 static EvaluablePtr parseInvalidData(const Json& j);
 static EvaluablePtr parseNoneKeywordVal(const Json& j);
 static std::optional<EvaluableInfo> extractOperationInfo(const Json& j);
 static EvaluablePtr parseFunction(const Json& j);
 static EvaluablePtr parseContextVal(const Json& j);
 static EvaluablePtr parseProperty(const Json& j);
-static EvaluablePtr parseShortcutFunctionCall(const Json& j);
+static Json reconstructJAS(const Json& j);
+static Json constructJAS(const StringView& expression);
+static Json constructJAS(const StringView& specifier,
+                         const StringView& expression);
+static Json constructJAS(const StringView& expression, const Json& jevaluable);
 static std::vector<ParsingRuleCallback>& parsers();
+static EvaluablePtr parseImpl(const Json& j);
 
 template <typename T>
 T jsonGet(const Json& j) {
@@ -56,11 +64,79 @@ bool jsonHasKey(const Json& j, const String& key) {
   return JsonTrait::hasKey(j, key);
 }
 
-//============================= PARSERS ===============================
-static EvaluablePtr parseInvalidData(const Json& j) {
-  throw_<SyntaxError>("Not an Evaluable: ", JsonTrait::dump(j));
-  return {};
+template <typename T>
+T jsonGet(const Json& j, const StringView& key) {
+  return parser::jsonGet<T>(jsonGet(j, String{key}));
 }
+
+Json jsonGet(const Json& j, const StringView& key) {
+  return JsonTrait::get(j, String{key});
+}
+bool jsonHasKey(const Json& j, const StringView& key) {
+  return JsonTrait::hasKey(j, String{key});
+}
+
+Json makeJson(const StringView& key, Json value) {
+  ObjectType o;
+  JsonTrait::add(o, String{key}, std::move(value));
+  return JsonTrait::makeJson(std::move(o));
+}
+
+//============================= PARSERS ===============================
+static bool isSpecifierLike(const StringView& expression) {
+  return !expression.empty() && expression[0] == prefix::specifier;
+}
+static bool isSpecifier(const StringView& kw) {
+  static std::set<StringView> specifiers = {
+      keyword::bit_and,
+      keyword::bit_not,
+      keyword::bit_or,
+      keyword::bit_xor,
+      keyword::divides,
+      keyword::minus,
+      keyword::modulus,
+      keyword::multiplies,
+      keyword::negate,
+      keyword::plus,
+      // logical operators
+      keyword::logical_and,
+      keyword::logical_not,
+      keyword::logical_or,
+      // comparison operators
+      keyword::eq,
+      keyword::ge,
+      keyword::gt,
+      keyword::le,
+      keyword::lt,
+      keyword::neq,
+      // list operations
+      keyword::all_of,
+      keyword::any_of,
+      keyword::none_of,
+      keyword::size_of,
+      keyword::count_if,
+      // short functions
+      keyword::cmp_ver,
+      keyword::prop,
+      keyword::evchg,
+      // function specifier
+      keyword::call,
+      // context value specifier
+      keyword::value_of,
+      keyword::func,
+      keyword::snapshot,
+      keyword::param,
+      keyword::cond,
+      keyword::item_id,
+      keyword::list,
+      keyword::path,
+  };
+
+  return !kw.empty() && (specifiers.find(kw) != specifiers.end() ||
+                         supported_func::allow(kw.substr(1)));
+}
+
+static EvaluablePtr parseInvalidData(const Json&) { return {}; }
 
 static EvaluablePtr parseNoneKeywordVal(const Json& j) {
   EvaluablePtr evb;
@@ -71,19 +147,13 @@ static EvaluablePtr parseNoneKeywordVal(const Json& j) {
   } else if (JsonTrait::isBool(j)) {
     evb = makeConst(jsonGet<bool>(j));
   } else if (JsonTrait::isString(j)) {
+    auto s = jsonGet<String>(j);
+    throwIf<SyntaxError>(
+        isSpecifierLike(s), "A string starts with character `",
+        prefix::specifier,
+        "` must be an allowed keyword, or a supported function name ??", s,
+        "??");
     evb = makeConst(jsonGet<String>(j));
-  } else if (JsonTrait::isArray(j)) {
-    auto ea = makeEArray();
-    for (auto& je : JsonTrait::get<ArrayType>(j)) {
-      ea->value.emplace_back(parser::parse(je));
-    }
-    evb = ea;
-  } else if (JsonTrait::isObject(j)) {
-    auto em = makeEMap();
-    for (auto& [key, je] : JsonTrait::get<ObjectType>(j)) {
-      em->value.emplace(key, parser::parse(je));
-    }
-    evb = std::move(em);
   }
   return evb;
 }
@@ -93,7 +163,7 @@ static std::optional<EvaluableInfo> extractOperationInfo(const Json& j) {
     auto oj = jsonGet<ObjectType>(j);
     for (auto& [key, val] : oj) {
       if (!key.empty() && key[0] == '@') {
-        return EvaluableInfo{key, val, jsonGet<String>(j, keyword::id)};
+        return EvaluableInfo{key, val, jsonGet<String>(j, String{keyword::id})};
       }
     }
   }
@@ -124,7 +194,7 @@ struct OperatorParserBase
         if (JsonTrait::isArray(jevaluation)) {
           Evaluables params;
           for (auto& jparam : jsonGet<ArrayType>(jevaluation)) {
-            params.emplace_back(parser::parse(jparam));
+            params.emplace_back(parser::parseImpl(jparam));
           }
           return makeOp(std::move(id), op, std::move(params));
         }
@@ -136,8 +206,8 @@ struct OperatorParserBase
 
 struct ArithmeticalOpParser
     : public OperatorParserBase<ArithmeticalOpParser, ArithmeticOperatorType> {
-  static const std::map<String, ArithmeticOperatorType>& s2op_map() {
-    static std::map<String, ArithmeticOperatorType> _ = {
+  static const std::map<StringView, ArithmeticOperatorType>& s2op_map() {
+    static std::map<StringView, ArithmeticOperatorType> _ = {
         {keyword::plus, ArithmeticOperatorType::plus},
         {keyword::minus, ArithmeticOperatorType::minus},
         {keyword::multiplies, ArithmeticOperatorType::multiplies},
@@ -154,8 +224,8 @@ struct ArithmeticalOpParser
 };
 struct LogicalOpParser
     : public OperatorParserBase<LogicalOpParser, LogicalOperatorType> {
-  static const std::map<String, LogicalOperatorType>& s2op_map() {
-    static std::map<String, LogicalOperatorType> _ = {
+  static const std::map<StringView, LogicalOperatorType>& s2op_map() {
+    static std::map<StringView, LogicalOperatorType> _ = {
         {keyword::logical_and, LogicalOperatorType::logical_and},
         {keyword::logical_or, LogicalOperatorType::logical_or},
         {keyword::logical_not, LogicalOperatorType::logical_not},
@@ -165,8 +235,8 @@ struct LogicalOpParser
 };
 struct ComparisonOpParser
     : public OperatorParserBase<ComparisonOpParser, ComparisonOperatorType> {
-  static const std::map<String, ComparisonOperatorType>& s2op_map() {
-    static std::map<String, ComparisonOperatorType> _ = {
+  static const std::map<StringView, ComparisonOperatorType>& s2op_map() {
+    static std::map<StringView, ComparisonOperatorType> _ = {
         {keyword::eq, ComparisonOperatorType::eq},
         {keyword::neq, ComparisonOperatorType::neq},
         {keyword::lt, ComparisonOperatorType::lt},
@@ -180,8 +250,8 @@ struct ComparisonOpParser
 
 struct ListOpParser
     : public OperationParserBase<ListOpParser, ListOperationType> {
-  static const std::map<String, ListOperationType>& s2op_map() {
-    static std::map<String, ListOperationType> _ = {
+  static const std::map<StringView, ListOperationType>& s2op_map() {
+    static std::map<StringView, ListOperationType> _ = {
         {keyword::any_of, ListOperationType::any_of},
         {keyword::all_of, ListOperationType::all_of},
         {keyword::none_of, ListOperationType::none_of},
@@ -209,26 +279,34 @@ struct ListOpParser
                              "` must be an evaluable syntax");
       };
 
-      auto jcond = jsonGet(jevaluable, keyword::cond);
-      if (!JsonTrait::isNull(jcond)) {
-        if (auto cond = parser::parse(jsonGet(jevaluable, keyword::cond))) {
-          output = makeOp(std::move(id), op, std::move(cond),
-                          jsonGet<String>(jevaluable, keyword::item_id),
-                          parser::parse(jsonGet(jevaluable, keyword::list)));
-          break;
+      EvaluablePtr evbCond;
+      EvaluablePtr list;
+
+      if (JsonTrait::isObject(jevaluable)) {
+        auto jcond = jsonGet(jevaluable, keyword::cond);
+        if (!JsonTrait::isNull(jcond)) {
+          evbCond = parser::parseImpl(jcond);
+        } else {
+          evbCond = parser::parseImpl(jevaluable);
         }
+        throwIf<SyntaxError>(
+            !evbCond, "Follow operation `", sop,
+            "` must be an evaluable condition with specifier `", keyword::cond,
+            "`");
+
+        output = makeOp(id, op, std::move(evbCond),
+                        jsonGet<String>(jevaluable, keyword::item_id),
+                        parser::parseImpl(jsonGet(jevaluable, keyword::list)));
+        break;
       }
 
       if (JsonTrait::isString(jevaluable)) {
         // accept string only for `size_of` operation, any other op
         throw_syntax_error((op != ListOperationType::size_of), sop);
-        output = makeOp(std::move(id), op, makeConst(true), {},
-                        makeConst(jsonGet<String>(jevaluable)));
-        break;
-      } else {
-        auto cond = parser::parse(jevaluable);
-        throw_syntax_error(!cond, sop);
-        output = makeOp(std::move(id), op, std::move(cond));
+        evbCond = makeConst(true);
+        output = makeOp(id, op, makeConst(true), {}, makeConst(jevaluable));
+      } else if (JsonTrait::isBool(jevaluable)) {
+        output = makeOp(id, op, makeConst(jevaluable), {});
       }
     } while (false);
     return output;
@@ -251,32 +329,21 @@ static EvaluablePtr parseFunction(const Json& j) {
         throwIf<SyntaxError>(!supported_func::allow(funcName), "Function ",
                              funcName, " is not supported");
         return makeFnc(std::move(id), std::move(funcName),
-                       parser::parse(jsonGet(jevaluable, keyword::param)));
+                       parser::parseImpl(jsonGet(jevaluable, keyword::param)));
       }
-    } else if (sop == keyword::cmp_ver) {
-      throwIf<SyntaxError>(
-          !JsonTrait::isArray(jevaluable) || JsonTrait::size(jevaluable) != 2,
-          "following keyword `", keyword::cmp_ver,
-          "` must be an array of exactly 2 strings");
-      return makeFnc(std::move(id), supported_func::cmp_ver,
-                     parser::parse(jevaluable));
-    } else if (sop == keyword::prop) {
-      throwIf<SyntaxError>(!JsonTrait::isString(jevaluable),
-                           "following keyword `", sop,
-                           "` must be a string of property name");
-
-      return makeFnc(std::move(id), supported_func::prop,
-                     makeConst(jevaluable));
-    } else if (sop == keyword::evchg) {
-      return makeFnc(std::move(id), supported_func::evchg,
-                     parser::parse(jevaluable));
+    } else if (isSpecifierLike(sop)) {
+      auto funcName = StringView{sop}.substr(1);
+      if (supported_func::allow(funcName)) {
+        return makeFnc(std::move(id), String{funcName},
+                       parser::parseImpl(jevaluable));
+      }
     }
   } else if (JsonTrait::isString(j)) {
     auto str = JsonTrait::get<String>(j);
-    if (str.find(keyword::call) == 0) {
-      auto colonPos = str.find(":");
-      if (colonPos < str.size()) {
-        return makeFnc({}, str.substr(colonPos + 1));
+    if (isSpecifierLike(str)) {
+      auto funcName = StringView{str}.substr(1);
+      if (supported_func::allow(funcName)) {
+        return makeFnc({}, String{funcName});
       }
     }
   }
@@ -288,19 +355,6 @@ static EvaluablePtr parseContextVal(const Json& j) {
   EvaluablePtr evaluated;
   do {
     if (!extracted) {
-      auto str = JsonTrait::get<String>(j);
-      if (str.empty()) {
-        break;
-      }
-      if (str.find(keyword::value_of) != 0) {
-        break;
-      }
-      auto colonPos = str.find(":");
-      if (colonPos >= str.size()) {
-        break;
-      }
-
-      evaluated = makeCV({}, str.substr(colonPos + 1));
       break;
     }
 
@@ -308,71 +362,142 @@ static EvaluablePtr parseContextVal(const Json& j) {
     if (sop != keyword::value_of) {
       break;
     }
+
+    EvaluablePtr evbPath;
+
     if (JsonTrait::isString(jevaluable)) {
-      evaluated = makeCV(std::move(id), jsonGet<String>(jevaluable));
-      break;
+      evbPath = parser::parseImpl(jevaluable);
+    } else if (JsonTrait::isObject(jevaluable)) {
+      if (auto jpath = jsonGet(jevaluable, keyword::path);
+          JsonTrait::isNull(jpath)) {
+        evbPath = parser::parseImpl(jevaluable);
+      } else {
+        evbPath = parser::parseImpl(jpath);
+      }
     }
 
-    throwIf<SyntaxError>(
-        !JsonTrait::isObject(jevaluable), "ollow keyword `", keyword::value_of,
-        "` must be a json object or a string - `", JsonTrait::dump(j));
+    throwIf<SyntaxError>(!evbPath, "follow keyword `", sop,
+                         "` must be a json object or a string: ??",
+                         JsonTrait::dump(j), "??");
 
-    auto jpath = jsonGet(jevaluable, keyword::path);
-    throwIf<SyntaxError>(!JsonTrait::isString(jpath), "Operation `",
-                         keyword::value_of, "` must specify `", keyword::path,
-                         "` to data item");
-
-    auto data_path = jsonGet<String>(jpath);
-    auto jsnapshot = JsonTrait::get(jevaluable, keyword::snapshot);
+    auto jsnapshot = jsonGet(jevaluable, keyword::snapshot);
     int32_t snapshot_idx = ContextVal::new_;
     if (JsonTrait::isInt(jsnapshot)) {
       snapshot_idx = jsonGet<int32_t>(jsnapshot);
     }
-    evaluated = makeCV(std::move(id), std::move(data_path), snapshot_idx);
+    evaluated = makeCV(std::move(id), std::move(evbPath), snapshot_idx);
   } while (false);
   return evaluated;
 }
+
 static EvaluablePtr parseProperty(const Json& j) {
   if (JsonTrait::isString(j)) {
-    auto str = JsonTrait::get<String>(j);
-    if (!str.empty() && str[0] == prefix::property) {
-      return makeProp(std::move(str));
+    auto expression = JsonTrait::get<String>(j);
+    if (!expression.empty() && expression[0] == prefix::property) {
+      return makeProp(String(expression));
     }
   }
   return {};
 }
 
-static EvaluablePtr parseShortcutFunctionCall(const Json& j) {
-  EvaluablePtr e;
-  do {
-    if (!JsonTrait::isString(j)) {
-      break;
+static Json reconstructJAS(const Json& j) {
+  if (JsonTrait::isArray(j)) {
+    ArrayType arr;
+    for (auto& ji : jsonGet<ArrayType>(j)) {
+      JsonTrait::add(arr, reconstructJAS(ji));
     }
-
-    auto str = JsonTrait::get<String>(j);
-    if (str.empty() || str[0] != prefix::operation) {
-      break;
+    return JsonTrait::makeJson(std::move(arr));
+  } else if (JsonTrait::isObject(j)) {
+    ObjectType o;
+    for (auto& [key, jval] : jsonGet<ObjectType>(j)) {
+      auto _jas = constructJAS(key, reconstructJAS(jval));
+      if (JsonTrait::isObject(_jas)) {
+        for (auto& [_newKey, _newJval] : jsonGet<ObjectType>(_jas)) {
+          JsonTrait::add(o, _newKey, _newJval);
+        }
+      }
     }
-    StringView sv = str;
+    return JsonTrait::makeJson(std::move(o));
+  } else if (JsonTrait::isString(j)) {
+    return constructJAS(jsonGet<String>(j));
+  } else {
+    return j;
+  }
+}
 
-    auto func = sv.substr(1);
-    auto colonPos = func.find(":");
-    String funcName;
-    EvaluablePtr param;
-    if (colonPos < func.size()) {
-      funcName = func.substr(0, colonPos);
+static Json constructJAS(const StringView& expression) {
+  if (!isSpecifierLike(expression) || isSpecifier(expression)) {
+    return JsonTrait::makeJson(String{expression});
+  }
+
+  auto colonPos = expression.find(':');
+  if (colonPos <= expression.size()) {
+    auto specifier = expression.substr(0, colonPos);
+    auto inputExpr = expression.substr(colonPos + 1);
+
+    auto jexpr = constructJAS(specifier, inputExpr);
+    if (!JsonTrait::isNull(jexpr)) {
+      return jexpr;
+    }
+  }
+  return JsonTrait::makeJson(String{expression});
+}
+
+static Json constructJAS(const StringView& specifier,
+                         const StringView& expression) {
+  if (isSpecifier(specifier)) {
+    return makeJson(specifier, constructJAS(expression));
+  }
+  return {};
+}
+static Json constructJAS(const StringView& expression, const Json& jevaluable) {
+  if (expression.empty()) {
+    return jevaluable;
+  } else if (isSpecifier(expression)) {
+    return makeJson(expression, jevaluable);
+  } else {
+    auto colonPos = expression.find(':');
+    if (colonPos <= expression.size()) {
+      auto specifier = expression.substr(0, colonPos);
+      auto inputExpr = expression.substr(colonPos + 1);
+      if (isSpecifier(specifier)) {
+        return makeJson(specifier, constructJAS(inputExpr, jevaluable));
+      }
+    }
+  }
+
+  return makeJson(expression, jevaluable);
+}
+
+static EvaluablePtr parseEVBMap(const Json& j) {
+  if (!JsonTrait::isObject(j)) {
+    return {};
+  }
+
+  auto evbMap = makeEMap();
+  String id;
+  for (auto& [specifier, jvalue] : JsonTrait::get<ObjectType>(j)) {
+    if (specifier == keyword::id) {
+      throwIf<SyntaxError>(!JsonTrait::isString(jvalue),
+                           "Following id specifier `", specifier,
+                           "` must be a string");
+      id = specifier;
     } else {
-      funcName = func;
+      evbMap->value.emplace(specifier, parser::parseImpl(jvalue));
     }
+  }
+  return evbMap;
+}
 
-    throwIf<SyntaxError>(!supported_func::allow(funcName),
-                         "Not supported function: ", funcName);
-    param =
-        parser::parse(JsonTrait::makeJson(String{func.substr(colonPos + 1)}));
-    e = makeFnc({}, std::move(funcName), std::move(param));
-
-  } while (false);
-  return e;
+static EvaluablePtr parseEVBArray(const Json& j) {
+  if (!JsonTrait::isArray(j)) {
+    return {};
+  }
+  auto evbArray = makeEArray();
+  for (auto& jevb : JsonTrait::get<ArrayType>(j)) {
+    evbArray->value.push_back(parser::parseImpl(jevb));
+  }
+  return evbArray;
 }
 
 static std::vector<ParsingRuleCallback>& parsers() {
@@ -384,20 +509,30 @@ static std::vector<ParsingRuleCallback>& parsers() {
       parseContextVal,
       parseFunction,
       parseProperty,
-      parseShortcutFunctionCall,
+      parseEVBArray,
+      parseEVBMap,
       parseNoneKeywordVal,  // this function must be call last
       parseInvalidData,
   };
   return _;
 }
 
-EvaluablePtr parse(const Json& j) {
+static EvaluablePtr parseImpl(const Json& j) {
   for (auto& parser : parsers()) {
     if (auto evaled = parser(j)) {
       return evaled;
     }
   }
   return {};
+}
+
+EvaluablePtr parse(const Json& j) {
+  throwIf<SyntaxError>(JsonTrait::isNull(j),
+                       "Not an Evaluable: ", JsonTrait::dump(j));
+  auto _jas = reconstructJAS(j);
+  //  std::cout << JsonTrait::dump(_jas) << std::endl;
+  //  std::cout << "-----------------------------------------" << std::endl;
+  return parseImpl(_jas);
 }
 
 }  // namespace parser

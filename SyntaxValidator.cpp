@@ -177,7 +177,8 @@ class SyntaxValidatorImpl : public EvaluatorBase {
 
   void eval(const ContextVal& ctv) override {
     decorateId(ctv);
-    os_ << "value_of(" << std::quoted(ctv.path);
+    os_ << "value_of(";
+    ctv.path->accept(this);
     switch (ctv.snapshot) {
       case ContextVal::new_:
         break;

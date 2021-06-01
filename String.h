@@ -18,12 +18,15 @@ using IStream = std::basic_istream<CharType>;
 using OStringStream = std::basic_ostringstream<CharType>;
 using IStringStream = std::basic_istringstream<CharType>;
 
-template <class _Str0, class... _StrN>
-String strJoin(_Str0&& s0, _StrN&&... ss) {
-  OStringStream oss;
-  oss << s0;
-  (oss << ... << ss);
-  return oss.str();
+template <class... _Msgs>
+String strJoin(_Msgs&&... ss) {
+  if constexpr (sizeof...(ss) == 0) {
+    return {};
+  } else {
+    OStringStream oss;
+    (oss << ... << ss);
+    return oss.str();
+  }
 }
 
 }  // namespace jas

@@ -320,11 +320,11 @@ struct ContextVal : public __BeEvaluable<ContextVal> {
     MaxIdx,
   };
 
-  ContextVal(String id, String path, size_t idx = new_)
+  ContextVal(String id, EvaluablePtr path, size_t idx = new_)
       : __BeEvaluable<ContextVal>(std::move(id)),
         path{std::move(path)},
         snapshot{idx} {}
-  String path;
+  EvaluablePtr path;
   Snapshot snapshot = new_;
 };
 
@@ -373,9 +373,9 @@ inline auto makeFnc(String id, String name, EvaluablePtr param = {}) {
   return std::make_shared<Function>(std::move(id), std::move(name),
                                     std::move(param));
 }
-inline auto makeCV(String id, String val,
+inline auto makeCV(String id, EvaluablePtr path,
                    size_t snapshot_idx = ContextVal::new_) {
-  return std::make_shared<ContextVal>(std::move(id), std::move(val),
+  return std::make_shared<ContextVal>(std::move(id), std::move(path),
                                       snapshot_idx);
 }
 inline auto makeProp(String propID) {

@@ -27,20 +27,17 @@ int main() {
     "#": "Backup",
     "@any_of": {
       "@list": "@value_of:BackupClient",
-      "@cond": {
-        "@lt": [
-          {
-            "@minus": [
-              "@current_time",
-              "@value_of:Last Backup Time"
-            ]
-          },
-          604800
-        ]
-      }
+      "@cond:@gt": [
+        {
+          "@minus": [
+            "@current_time",
+            "@value_of:Last Backup Time"
+          ]
+        },
+        604800
+      ]
     }
   },
-
   "lower": "@value_of:@toupper:Hello",
   "report_if": "@evchg:#Backup"
 }
