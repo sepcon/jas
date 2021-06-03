@@ -3,14 +3,14 @@
 #include <fstream>
 #include <iostream>
 
-#include "JEvalContext.h"
+#include "ConsoleLogger.h"
+#include "HistoricalEvalContext.h"
 #include "Json.h"
 #include "Parser.h"
 #include "SyntaxEvaluator.h"
 #include "SyntaxValidator.h"
 
 namespace jas {
-using json11::Json;
 namespace fs = std::filesystem;
 
 struct test_case {
@@ -20,10 +20,9 @@ struct test_case {
   int data_line_number = -1;
 };
 
+using Ifstream = std::basic_ifstream<CharType>;
 using test_cases = std::vector<test_case>;
-struct data_error : public std::runtime_error {
-  using std::runtime_error::runtime_error;
-};
+__mc_jas_exception(data_error);
 
 static int run_all_tests(const fs::path& testcase_dir);
 static void begin_test(const fs::path& test_data_file);
@@ -31,11 +30,11 @@ static void end_test(const fs::path& test_data_file);
 static test_cases load_no_input_test_cases(const fs::path& data_file);
 static test_cases load_has_input_test_cases(const fs::path& data_file);
 static void run_test_case(const test_case& tc);
-static void failed_test_case(const test_case& tc, const std::string& syntax,
-                             const json11::Json* observed,
-                             const String& reason = {});
+static void failed_test_case(const test_case& tc, const String& syntax,
+                             const Json* observed, const String& reason = {});
 static void success_test_case(const test_case& tc);
-static Json parse_test_case(const std::string& data);
+static Json parse_test_case(const String& data);
+static EvalContextPtr make_eval_ctxt(Json data);
 
 static int total_passes = 0;
 static int total_failed = 0;
@@ -46,7 +45,6 @@ static int run_all_tests(const fs::path& testcase_dir) {
        it != fs::directory_iterator{}; ++it) {
     if (it->is_regular_file(ec)) {
       auto test_data_file = it->path();
-
       test_cases (*load_test_cases)(const fs::path& data_file) = nullptr;
       if (test_data_file.extension() == ".ni") {
         load_test_cases = load_no_input_test_cases;
@@ -60,33 +58,32 @@ static int run_all_tests(const fs::path& testcase_dir) {
           for (auto& tc : tcs) {
             try {
               run_test_case(tc);
-            } catch (const std::runtime_error& e) {
+            } catch (const data_error& e) {
               failed_test_case(tc, {}, {}, e.what());
             }
           }
         } catch (const data_error& de) {
-          std::cout << "Failed to parse test case: " << de.what() << std::endl;
+          clogger() << "Failed to parse test case: " << de.what();
         }
         end_test(test_data_file);
       }
     }
   }
-  std::cout << "\nSUMARY:"
+  clogger() << "\nSUMARY:"
             << "\nTotal passes: " << total_passes
-            << "\nTotal failed: " << total_failed << std::endl;
+            << "\nTotal failed: " << total_failed;
   return total_failed;
 }
 static void begin_test(const fs::path& test_data_file) {
-  std::cout << "start testing file " << test_data_file.filename() << std::endl;
+  clogger() << "start testing file " << test_data_file.filename();
 }
 static void end_test(const fs::path& test_data_file) {
-  std::cout << "finished testing file " << test_data_file.filename()
-            << std::endl;
+  clogger() << "finished testing file " << test_data_file.filename();
 }
 
 static test_cases load_no_input_test_cases(const fs::path& data_file) {
-  std::ifstream ifs{data_file};
-  std::string line;
+  Ifstream ifs{data_file};
+  String line;
   int i = 0;
   int line_number = 0;
   Json rule;
@@ -95,7 +92,7 @@ static test_cases load_no_input_test_cases(const fs::path& data_file) {
   test_cases tcs;
   while (std::getline(ifs, line)) {
     ++line_number;
-    if (line.find("//") == 0) {
+    if (line.find(JASSTR("//")) == 0) {
       continue;
     }
     if (i == 0) {
@@ -111,8 +108,8 @@ static test_cases load_no_input_test_cases(const fs::path& data_file) {
 }
 
 static test_cases load_has_input_test_cases(const fs::path& data_file) {
-  std::ifstream ifs{data_file};
-  std::string line;
+  Ifstream ifs{data_file};
+  String line;
   int i = 0;
   int line_number = 0;
   Json rule;
@@ -122,7 +119,7 @@ static test_cases load_has_input_test_cases(const fs::path& data_file) {
   test_cases tcs;
   while (std::getline(ifs, line)) {
     ++line_number;
-    if (line.find("//") == 0) {
+    if (line.find(JASSTR("//")) == 0) {
       continue;
     }
     if (i == 0) {
@@ -139,59 +136,66 @@ static test_cases load_has_input_test_cases(const fs::path& data_file) {
   return tcs;
 }
 static void run_test_case(const test_case& tc) {
+  static auto parsingCtxt = std::make_shared<HistoricalEvalContext>();
   try {
-    auto evaluable = parser::parse(tc.rule);
+    auto evaluable = parser::parse(parsingCtxt, tc.rule);
     if (evaluable) {
-      auto syntax = SyntaxValidator{}.generate_syntax(*evaluable);
+      auto syntax = SyntaxValidator{}.generateSyntax(*evaluable);
 
       auto evaluated = SyntaxEvaluator{}.evaluate(
-          evaluable, std::make_shared<JEvalContext>(nullptr, tc.context_data));
+          evaluable, make_eval_ctxt(tc.context_data));
       if (JsonTrait::equal(tc.expected, evaluated.value)) {
         success_test_case(tc);
       } else {
         failed_test_case(tc, syntax, &evaluated.value);
       }
     } else {
-      failed_test_case(tc, "", nullptr, "Failed to parse data");
+      failed_test_case(tc, JASSTR(""), nullptr, JASSTR("Failed to parse data"));
     }
-  } catch (const ExceptionBase& e) {
+  } catch (const Exception& e) {
     failed_test_case(tc, JsonTrait::dump(tc.rule), nullptr, e.what());
   }
 }
 
-static void failed_test_case(const test_case& tc, const std::string& syntax,
+static void failed_test_case(const test_case& tc, const String& syntax,
                              const Json* observed, const String& reason) {
   ++total_failed;
-  std::cout << "TC[" << tc.data_line_number << "][FAILED] - syntax: " << syntax;
+  clogger() << JASSTR("TC[") << tc.data_line_number
+            << JASSTR("][FAILED] - syntax: ") << syntax;
   if (observed) {
-    std::cout << " - [expected]: " << tc.expected.dump()
-              << " - [observed]: " << observed->dump();
+    clogger() << JASSTR(" - [expected]: ") << JsonTrait::dump(tc.expected)
+              << JASSTR(" - [observed]: ") << JsonTrait::dump(*observed);
   } else {
-    std::cout << " - [reason]: \n" << reason;
+    clogger() << " - [reason]: \n" << reason;
   }
-  std::cout << "\n";
+  clogger() << "\n";
 }
 
-static void success_test_case(const test_case& /*tc*/) {
-  ++total_passes;
-  //  std::cout << "TC[" << tc.data_line_number << "][SUCCESS]\n";
+static void success_test_case(const test_case& /*tc*/) { ++total_passes; }
+
+static Json parse_test_case(const String& data) {
+  return JsonTrait::parse(data);
 }
 
-static Json parse_test_case(const std::string& data) {
-  std::string json_parsed_err;
-  auto parsed = Json::parse(data, json_parsed_err);
-  if (!json_parsed_err.empty()) {
-    throw data_error{json_parsed_err};
+static EvalContextPtr make_eval_ctxt(Json data) {
+  if (JsonTrait::isObject(data) && JsonTrait::hasKey(data, JASSTR("__old")) &&
+      JsonTrait::hasKey(data, JASSTR("__new"))) {
+    return std::make_shared<HistoricalEvalContext>(
+        nullptr, JsonTrait::get(data, JASSTR("__new")),
+        JsonTrait::get(data, JASSTR("__old")));
+  } else {
+    return std::make_shared<HistoricalEvalContext>(nullptr, std::move(data));
   }
-  return parsed;
 }
+
 }  // namespace jas
 
+using namespace jas;
 int main(int argc, char** argv) {
   if (argc == 2) {
     return jas::run_all_tests(argv[1]);
   } else {
-    std::cout << "ERROR: No test case dir specified!" << std::endl;
+    clogger() << "ERROR: No test case dir specified!";
     return -1;
   }
 }

@@ -1,10 +1,13 @@
 #pragma once
 
-#include "EvalContext.h"
+#include "EvalContextIF.h"
+#include "Evaluable.h"
 
 namespace jas {
 
-using EvaluatedValue = DirectVal;
+using EvaluatedValue = JsonAdapter;
+struct Evaluable;
+
 class SyntaxEvaluator {
  public:
   SyntaxEvaluator();

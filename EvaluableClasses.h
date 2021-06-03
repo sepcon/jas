@@ -1,12 +1,11 @@
 #pragma once
 
-#include <functional>
 #include <map>
 #include <memory>
-#include <variant>
 #include <vector>
 
 #include "Evaluable.h"
+#include "Exception.h"
 #include "Json.h"
 #include "String.h"
 
@@ -21,9 +20,11 @@ struct LogicalOperator;
 struct ComparisonOperator;
 struct ListOperation;
 struct Function;
-struct ContextVal;
-struct Property;
+struct VariableFieldQuery;
+struct Variable;
 using Evaluables = std::vector<EvaluablePtr>;
+//                            param_name <-> evaluabe
+using ContextParams = std::map<String, EvaluablePtr>;
 
 class EvaluatorBase {
  public:
@@ -36,8 +37,8 @@ class EvaluatorBase {
   virtual void eval(const ComparisonOperator&) = 0;
   virtual void eval(const ListOperation&) = 0;
   virtual void eval(const Function&) = 0;
-  virtual void eval(const ContextVal&) = 0;
-  virtual void eval(const Property&) = 0;
+  virtual void eval(const VariableFieldQuery&) = 0;
+  virtual void eval(const Variable&) = 0;
 };
 
 template <class _SpecEvaluable>
@@ -48,58 +49,19 @@ struct __BeEvaluable : public Evaluable {
   }
 };
 
-struct DirectVal : public __BeEvaluable<DirectVal> {
-  template <class T,
-            std::enable_if_t<JsonTrait::isJsonConstructible<T>(), bool> = true>
-  DirectVal(T&& v) : value{JsonTrait::makeJson(std::forward<T>(v))} {}
-  DirectVal(Json v) : value{std::move(v)} {}
-  DirectVal() = default;
-  DirectVal(const DirectVal&) = default;
-  DirectVal(DirectVal&&) noexcept = default;
-  DirectVal& operator=(const DirectVal&) = default;
-  DirectVal& operator=(DirectVal&&) = default;
+struct DirectVal : public Evaluable, public JsonAdapter {
+  using Base = JsonAdapter;
+  using Base::Base;
 
-  template <class T>
-  bool isType() const {
-    return JsonTrait::isType<T>(value);
-  }
-  template <class T>
-  T get() const {
-    if constexpr (std::is_same_v<T, Json>) {
-      return value;
-    } else {
-      return JsonTrait::get<T>(value);
-    }
-  }
-
-  template <class T>
-  operator T() const {
-    return get<T>();
-  }
-
-  operator const Json&() const { return value; }
-
-  template <typename _callable>
-  auto visitValue(_callable&& apply) const {
-    if (isType<bool>()) {
-      return apply(get<bool>());
-    } else if (isType<int>()) {
-      return apply(get<int>());
-    } else if (isType<double>()) {
-      return apply(get<double>());
-    } else if (isType<String>()) {
-      return apply(get<String>());
-    }
-    return apply(value);
-  }
-
-  Json value;
+  void accept(EvaluatorBase* e) const override { e->eval(*this); }
 };
 
 struct EvaluableMap : public __BeEvaluable<EvaluableMap> {
   using value_type = std::map<String, EvaluablePtr>;
-  EvaluableMap(value_type v = {}) : value{std::move(v)} {}
+  EvaluableMap(value_type v = {}, ContextParams cp = {})
+      : value{std::move(v)}, ctxtParams{std::move(cp)} {}
   value_type value;
+  ContextParams ctxtParams;
 };
 
 struct EvaluableArray : public __BeEvaluable<EvaluableArray> {
@@ -115,12 +77,16 @@ struct _OperatorBase : public __BeEvaluable<_SubType> {
   using Params = Evaluables;
   using OperatorType = _Type;
 
-  _OperatorBase(String id, OperatorType t, Params p)
-      : __BeEvaluable<_SubType>(std::move(id)), type{t}, params{std::move(p)} {}
+  _OperatorBase(String id, OperatorType t, Params p, ContextParams cp)
+      : __BeEvaluable<_SubType>(std::move(id)),
+        type{t},
+        params{std::move(p)},
+        ctxtParams{std::move(cp)} {}
   void add_param(ParamPtr p) { params.push_back(std::move(p)); }
 
   OperatorType type;
   Params params;
+  ContextParams ctxtParams;
 };
 
 enum class ArithmeticOperatorType : int32_t {
@@ -258,8 +224,9 @@ enum class ListOperationType : char {
   any_of,
   all_of,
   none_of,
-  size_of,
   count_if,
+  filter_if,
+  transform,
   invalid,
 };
 
@@ -274,11 +241,14 @@ inline OStream& operator<<(OStream& os, ListOperationType o) {
     case ListOperationType::none_of:
       os << "none_of";
       break;
-    case ListOperationType::size_of:
-      os << "size_of";
-      break;
     case ListOperationType::count_if:
       os << "count_if";
+      break;
+    case ListOperationType::filter_if:
+      os << "filter_if";
+      break;
+    case ListOperationType::transform:
+      os << "transform";
       break;
     case ListOperationType::invalid:
       os << "invalid";
@@ -288,111 +258,105 @@ inline OStream& operator<<(OStream& os, ListOperationType o) {
 }
 
 struct ListOperation : public __BeEvaluable<ListOperation> {
-  ListOperation(String id, ListOperationType t, EvaluablePtr c, String iid = {},
-                EvaluablePtr list = {})
+  ListOperation(String id, ListOperationType t, EvaluablePtr c,
+                EvaluablePtr list = {}, ContextParams cp = {})
       : __BeEvaluable<ListOperation>(std::move(id)),
         type(t),
         list(std::move(list)),
-        itemID{std::move(iid)},
-        cond(std::move(c)) {}
+        cond(std::move(c)),
+        ctxtParams(std::move(cp)) {}
 
   ListOperationType type;
-  String path;
   EvaluablePtr list;
-  String itemID;
   EvaluablePtr cond;
+  ContextParams ctxtParams;
 };
 
 struct Function : public __BeEvaluable<Function> {
-  Function(String id, String name, EvaluablePtr param)
+  Function(String id, String name, EvaluablePtr param, ContextParams cp = {})
       : __BeEvaluable<Function>(std::move(id)),
         name(std::move(name)),
-        param(std::move(param)) {}
+        param(std::move(param)),
+        ctxtParams(std::move(cp)) {}
 
   String name;
   EvaluablePtr param;
+  ContextParams ctxtParams;
 };
 
-struct ContextVal : public __BeEvaluable<ContextVal> {
-  enum Snapshot : size_t {
-    old = 0,
-    new_ = 1,
-    MaxIdx,
-  };
+struct VariableFieldQuery : public __BeEvaluable<VariableFieldQuery> {
+  using _Base = __BeEvaluable<VariableFieldQuery>;
+  VariableFieldQuery(String name, std::vector<EvaluablePtr> path)
+      : _Base(std::move(name)), field_path(std::move(path)) {}
 
-  ContextVal(String id, EvaluablePtr path, size_t idx = new_)
-      : __BeEvaluable<ContextVal>(std::move(id)),
-        path{std::move(path)},
-        snapshot{idx} {}
-  EvaluablePtr path;
-  Snapshot snapshot = new_;
+  std::vector<EvaluablePtr> field_path;
 };
 
-struct Property : public __BeEvaluable<Property> {
-  using _Base = __BeEvaluable<Property>;
+struct Variable : public __BeEvaluable<Variable> {
+  using _Base = __BeEvaluable<Variable>;
   using _Base::_Base;
 };
 
-inline auto makeOp(String id, ArithmeticOperatorType op, Evaluables params) {
-  return std::make_shared<ArithmaticalOperator>(std::move(id), op,
-                                                std::move(params));
-}
-inline auto makeOp(String id, LogicalOperatorType op, Evaluables params) {
-  return std::make_shared<LogicalOperator>(std::move(id), op,
-                                           std::move(params));
-}
-inline auto makeOp(String id, ComparisonOperatorType op, Evaluables params) {
-  return std::make_shared<ComparisonOperator>(std::move(id), op,
-                                              std::move(params));
-}
-inline auto makeOp(String id, ListOperationType op, EvaluablePtr cond,
-                   String iid = {}, EvaluablePtr list = {}) {
-  return std::make_shared<ListOperation>(std::move(id), op, std::move(cond),
-                                         std::move(iid), std::move(list));
-}
-
-inline auto makeConst(int val) {
+inline auto makeDV(int val) {
   return std::make_shared<DirectVal>(static_cast<int64_t>(val));
 }
-inline auto makeConst(int64_t val) { return std::make_shared<DirectVal>(val); }
-inline auto makeConst(float val) {
+inline auto makeDV(int64_t val) { return std::make_shared<DirectVal>(val); }
+inline auto makeDV(float val) {
   return std::make_shared<DirectVal>(static_cast<double>(val));
 }
-inline auto makeConst(double val) { return std::make_shared<DirectVal>(val); }
-inline auto makeConst(String val) {
+inline auto makeDV(double val) { return std::make_shared<DirectVal>(val); }
+inline auto makeDV(String val) {
   return std::make_shared<DirectVal>(std::move(val));
 }
-inline auto makeConst(bool val) { return std::make_shared<DirectVal>(val); }
-inline auto makeConst(Json val) {
+inline auto makeDV(bool val) { return std::make_shared<DirectVal>(val); }
+inline auto makeDV(Json val) {
   return std::make_shared<DirectVal>(std::move(val));
 }
-inline auto makeConst(nullptr_t val) {
-  return std::make_shared<DirectVal>(val);
-}
-inline auto makeFnc(String id, String name, EvaluablePtr param = {}) {
-  return std::make_shared<Function>(std::move(id), std::move(name),
-                                    std::move(param));
-}
-inline auto makeCV(String id, EvaluablePtr path,
-                   size_t snapshot_idx = ContextVal::new_) {
-  return std::make_shared<ContextVal>(std::move(id), std::move(path),
-                                      snapshot_idx);
-}
-inline auto makeProp(String propID) {
-  return std::make_shared<Property>(std::move(propID));
-}
+inline auto makeDV(nullptr_t val) { return std::make_shared<DirectVal>(val); }
 
-inline auto operator"" _const(uint64_t v) {
+inline auto operator"" _dv(uint64_t v) {
   return std::make_shared<DirectVal>(static_cast<int64_t>(v));
 }
 
-inline auto operator"" _const(long double v) {
+inline auto operator"" _dv(long double v) {
   return std::make_shared<DirectVal>(static_cast<double>(v));
 }
-inline auto operator"" _const(const char* v, size_t s) {
-  return std::make_shared<DirectVal>(std::string(v, s));
+inline auto operator"" _dv(const CharType* v, size_t s) {
+  return std::make_shared<DirectVal>(String(v, s));
 }
-
+inline auto makeOp(String id, ArithmeticOperatorType op, Evaluables params,
+                   ContextParams cp = {}) {
+  return std::make_shared<ArithmaticalOperator>(
+      std::move(id), op, std::move(params), std::move(cp));
+}
+inline auto makeOp(String id, LogicalOperatorType op, Evaluables params,
+                   ContextParams cp = {}) {
+  return std::make_shared<LogicalOperator>(std::move(id), op, std::move(params),
+                                           std::move(cp));
+}
+inline auto makeOp(String id, ComparisonOperatorType op, Evaluables params,
+                   ContextParams cp = {}) {
+  return std::make_shared<ComparisonOperator>(std::move(id), op,
+                                              std::move(params), std::move(cp));
+}
+inline auto makeOp(String id, ListOperationType op, EvaluablePtr cond,
+                   EvaluablePtr list, ContextParams cp = {}) {
+  return std::make_shared<ListOperation>(std::move(id), op, std::move(cond),
+                                         std::move(list), std::move(cp));
+}
+inline auto makeFnc(String id, String name, EvaluablePtr param = {},
+                    ContextParams cp = {}) {
+  return std::make_shared<Function>(std::move(id), std::move(name),
+                                    std::move(param), std::move(cp));
+}
+inline auto makeProp(String propID) {
+  return std::make_shared<Variable>(std::move(propID));
+}
+inline auto makeVariableFieldQuery(String name,
+                                   std::vector<EvaluablePtr> paths) {
+  return std::make_shared<VariableFieldQuery>(std::move(name),
+                                              std::move(paths));
+}
 inline auto makeEMap(EvaluableMap::value_type v = {}) {
   return std::make_shared<EvaluableMap>(std::move(v));
 }

@@ -4,22 +4,23 @@
 
 namespace jas {
 
-struct ExceptionBase {
-  ExceptionBase() = default;
-  ExceptionBase(String d) : details{std::move(d)} {}
-  virtual ~ExceptionBase() = default;
+struct Exception {
+  Exception() = default;
+  Exception(String d) : details{std::move(d)} {}
+  virtual ~Exception() = default;
   virtual const String& what() const { return details; }
   String details;
 };
 
 #define __mc_jas_exception(name)                                       \
-  struct name : public ExceptionBase {                                 \
-    using _Base = ExceptionBase;                                       \
+  struct name : public jas::Exception {                                \
+    using _Base = jas::Exception;                                      \
     name(const String& msg = {}) : _Base(strJoin(#name, ": ", msg)) {} \
   }
 
 __mc_jas_exception(SyntaxError);
 __mc_jas_exception(EvaluationError);
+__mc_jas_exception(DataError);
 
 //#undef __mc_jas_exception
 

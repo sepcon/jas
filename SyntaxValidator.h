@@ -13,10 +13,10 @@ class SyntaxValidator {
   bool validate(const Evaluable& e);
   bool validate(const EvaluablePtr& e);
   void clear();
-  String generate_syntax(const Evaluable& e);
-  String generate_syntax(const EvaluablePtr& e);
-  String get_report();
-  bool has_error() const;
+  String generateSyntax(const Evaluable& e);
+  String generateSyntax(const EvaluablePtr& e);
+  String getReport();
+  bool hasError() const;
 
  private:
   class SyntaxValidatorImpl* impl_ = nullptr;

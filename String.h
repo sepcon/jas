@@ -1,18 +1,18 @@
 #pragma once
 #include <sstream>
 #include <string>
-#include <string_view>
 
 namespace jas {
 
-#ifdef JAS_CHAR_TYPE
-using CharType = JAS_CHAR_TYPE;
+#ifdef JAS_USE_WSTR
+using CharType = wchar_t;
+#define JASSTR(cstr) L##cstr
 #else
 using CharType = char;
+#define JASSTR(cstr) cstr
 #endif
 
 using String = std::basic_string<CharType>;
-using StringView = std::basic_string_view<CharType>;
 using OStream = std::basic_ostream<CharType>;
 using IStream = std::basic_istream<CharType>;
 using OStringStream = std::basic_ostringstream<CharType>;

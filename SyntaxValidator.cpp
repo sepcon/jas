@@ -27,7 +27,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   }
 
   void clear() {
-    os_.str("");
+    os_.str(JASSTR(""));
     errors_.clear();
   }
 
@@ -40,34 +40,28 @@ class SyntaxValidatorImpl : public EvaluatorBase {
     if (e) {
       return generateSyntax(*e);
     } else {
-      return "invalid";
+      return JASSTR("invalid");
     }
   }
 
-  String getReport() { return os_.str(); }
+  String getReport() { return JASSTR("\n") + os_.str(); }
 
   bool hasError() const { return !errors_.empty(); }
 
   void flushAllErrors() {
     auto summaryErrStart = [this] {
-      os_ << "\n>"
-             "\n>"
-             "\n>> ERRORS:"
-          << errors_.size();
+      os_ << JASSTR("\n>--\n>> ERRORS:") << errors_.size();
     };
-    auto summaryErrEnd = [this] {
-      os_ << "\n>"
-             "\n>";
-    };
+    auto summaryErrEnd = [this] { os_ << JASSTR("\n>--"); };
 
     if (!errors_.empty()) {
       int i = 0;
       std::streamsize prevPos = 0;
 
-      os_ << "\n";
+      os_ << JASSTR("\n");
       for (auto& [pos, errmsg] : errors_) {
-        os_ << std::setfill(' ') << std::setw(pos - prevPos) << "^(" << i++
-            << ")";
+        os_ << std::setfill(JASSTR(' ')) << std::setw(pos - prevPos)
+            << JASSTR("^(") << i++ << JASSTR(")");
         prevPos = pos + 2;
       }
 
@@ -75,7 +69,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
 
       summaryErrStart();
       for (auto& [pos, errmsg] : errors_) {
-        os_ << "\n>> (" << i++ << "): " << errmsg;
+        os_ << JASSTR("\n>> (") << i++ << JASSTR("): ") << errmsg;
       }
       summaryErrEnd();
     } else {
@@ -86,9 +80,26 @@ class SyntaxValidatorImpl : public EvaluatorBase {
 
   void evaluate(const EvaluablePtr& e) { e->accept(this); }
   void evaluate(const Evaluable& e) { e.accept(this); }
+
+  bool dumpCtxtParams(const ContextParams& params) {
+    if (!params.empty()) {
+      os_ << "set(";
+      auto it = std::begin(params);
+      os_ << "$" << it->first << '=';
+      this->evaluate(it->second);
+      for (; ++it != std::end(params);) {
+        os_ << JASSTR(",");
+        os_ << "$" << it->first << '=';
+        this->evaluate(it->second);
+      }
+      os_ << ").then";
+      return true;
+    }
+    return false;
+  }
   void decorateId(const Evaluable& e) {
     if (!e.id.empty()) {
-      os_ << prefix::property << e.id << "=";
+      os_ << prefix::variable << e.id << JASSTR("=");
     }
   }
   void eval(const DirectVal& val) override {
@@ -96,33 +107,34 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   }
 
   void eval(const EvaluableMap& e) override {
-    os_ << "{";
+    dumpCtxtParams(e.ctxtParams);
+    os_ << JASSTR("{");
     if (!e.value.empty()) {
       auto it = std::begin(e.value);
       auto dumpkv = [this](auto&& k, auto&& v) {
-        os_ << std::quoted(k) << ":";
+        os_ << std::quoted(k) << JASSTR(":");
         this->evaluate(v);
       };
 
       dumpkv(it->first, it->second);
 
       while (++it != std::end(e.value)) {
-        os_ << ",";
+        os_ << JASSTR(",");
         dumpkv(it->first, it->second);
       }
     }
-    os_ << "}";
+    os_ << JASSTR("}");
   }
 
   void eval(const EvaluableArray& e) override {
-    os_ << "[";
+    os_ << JASSTR("[");
     auto it = std::begin(e.value);
     evaluate(*it);
     while (++it != std::end(e.value)) {
-      os_ << ",";
+      os_ << JASSTR(",");
       evaluate(*it);
     }
-    os_ << "]";
+    os_ << JASSTR("]");
   }
 
   void eval(const ArithmaticalOperator& op) override {
@@ -149,62 +161,53 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   }
 
   void eval(const ListOperation& op) override {
+    dumpCtxtParams(op.ctxtParams);
     decorateId(op);
-    os_ << op.type << "(";
-
+    os_ << op.type << JASSTR("(");
     if (!op.list) {
-      os_ << std::quoted("current_list");
+      os_ << std::quoted(JASSTR("current_list"));
     } else {
       op.list->accept(this);
     }
-    os_ << ").satisfies(";
-
+    if (op.type != ListOperationType::transform) {
+      os_ << JASSTR(").satisfies(");
+    } else {
+      os_ << JASSTR(").with(");
+    }
     op.cond->accept(this);
 
-    os_ << ")";
+    os_ << JASSTR(")");
   }
 
   void eval(const Function& fnc) override {
+    dumpCtxtParams(fnc.ctxtParams);
     decorateId(fnc);
-    os_ << (fnc.name.empty() ? bookMarkError("Funtion name must not be empty")
-                             : fnc.name);
-    os_ << "(";
+    os_ << (fnc.name.empty()
+                ? bookMarkError(JASSTR("Funtion name must not be empty"))
+                : fnc.name);
+    os_ << JASSTR("(");
+
     if (fnc.param) {
       fnc.param->accept(this);
     }
-    os_ << ")";
+    os_ << JASSTR(")");
   }
 
-  void eval(const ContextVal& ctv) override {
-    decorateId(ctv);
-    os_ << "value_of(";
-    ctv.path->accept(this);
-    switch (ctv.snapshot) {
-      case ContextVal::new_:
-        break;
-      case ContextVal::old:
-        os_ << ", snapshot=old";
-        break;
-      default: {
-        os_ << bookMarkError("Wrong snapshot index value");
-        os_ << "invalid(" << ctv.snapshot << ")";
-      } break;
-    }
-    os_ << ")";
+  void eval(const VariableFieldQuery&)  {
+
   }
 
-  void eval(const Property& rv) override {
-    os_ << "property(";
+  void eval(const Variable& rv) override {
+    os_ << prefix::variable;
     if (rv.id.empty()) {
-      os_ << bookMarkError("a `Property Name` must not be empty");
+      os_ << bookMarkError(JASSTR("a `Property Name` must not be empty"));
     } else {
-      os_ << std::quoted(rv.id);
+      os_ << rv.id;
     }
-    os_ << ")";
   }
 
   String bookMarkError(const String& err) {
-    constexpr char error_indicator[] = "^^";
+    constexpr CharType error_indicator[] = JASSTR("^^");
     errors_.emplace_back(
         (std::streamsize)os_.tellp() + sizeof(error_indicator) / 2 + 1, err);
     return error_indicator;
@@ -212,50 +215,53 @@ class SyntaxValidatorImpl : public EvaluatorBase {
 
   template <class T>
   void dumpPreUnaryOp(const _OperatorBase<T, typename T::OperatorType>& op) {
-    os_ << "(";
+    dumpCtxtParams(op.ctxtParams);
+    os_ << JASSTR("(");
     os_ << op.type;
     if (op.params.empty()) {
-      os_ << bookMarkError("Missing paramter");
+      os_ << bookMarkError(JASSTR("Missing paramter"));
     } else {
       op.params[0]->accept(this);
       if (op.params.size() > 1) {
-        os_ << bookMarkError("More than required parameters count");
+        os_ << bookMarkError(JASSTR("More than required parameters count"));
       }
     }
-    os_ << ")";
+    os_ << JASSTR(")");
   }
 
   template <class T>
   void dumpBinaryOp(const _OperatorBase<T, typename T::OperatorType>& op,
                     bool exact2 = false) {
-    os_ << "(";
+    dumpCtxtParams(op.ctxtParams);
+    os_ << JASSTR("(");
     if (op.params.size() < 2) {
       if (op.params.empty()) {
-        os_ << bookMarkError("Parameter is missing") << op.type
-            << bookMarkError("Parameter is missing");
+        os_ << bookMarkError(JASSTR("Parameter is missing")) << op.type
+            << bookMarkError(JASSTR("Parameter is missing"));
       } else {
         op.params[0]->accept(this);
-        os_ << " " << op.type << bookMarkError("Parameter is missing");
+        os_ << JASSTR(" ") << op.type
+            << bookMarkError(JASSTR("Parameter is missing"));
       }
     } else {
       auto it = std::begin(op.params);
       (*it)->accept(this);
-      os_ << ' ' << op.type << ' ';
+      os_ << JASSTR(' ') << op.type << JASSTR(' ');
       (*(++it))->accept(this);
       if (!exact2) {
         while (++it != std::end(op.params)) {
-          os_ << ' ' << op.type << ' ';
+          os_ << JASSTR(' ') << op.type << JASSTR(' ');
           (*it)->accept(this);
         }
       } else {
         while (++it != std::end(op.params)) {
-          os_ << ' ' << op.type << ' '
-              << bookMarkError("More than required parameters count");
+          os_ << JASSTR(' ') << op.type << JASSTR(' ')
+              << bookMarkError(JASSTR("More than required parameters count"));
           (*it)->accept(this);
         }
       }
     }
-    os_ << ")";
+    os_ << JASSTR(")");
   }
 
   OStringStream os_;
@@ -273,12 +279,12 @@ bool SyntaxValidator::validate(const EvaluablePtr& e) {
   return impl_->validate(e);
 }
 void SyntaxValidator::clear() { return impl_->clear(); }
-String SyntaxValidator::generate_syntax(const Evaluable& e) {
+String SyntaxValidator::generateSyntax(const Evaluable& e) {
   return impl_->generateSyntax(e);
 }
-String SyntaxValidator::generate_syntax(const EvaluablePtr& e) {
+String SyntaxValidator::generateSyntax(const EvaluablePtr& e) {
   return impl_->generateSyntax(e);
 }
-String SyntaxValidator::get_report() { return impl_->getReport(); }
-bool SyntaxValidator::has_error() const { return impl_->hasError(); }
+String SyntaxValidator::getReport() { return impl_->getReport(); }
+bool SyntaxValidator::hasError() const { return impl_->hasError(); }
 }  // namespace jas

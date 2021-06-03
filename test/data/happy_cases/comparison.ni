@@ -63,3 +63,9 @@ false
 true
 {"@neq":["1","1"]}
 false
+{"@neq":[null, 1]}
+true
+{"@neq":["string", 1]}
+true
+{"@eq":["string", [1,2,3]]}
+false

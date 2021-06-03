@@ -1,6 +1,12 @@
-{"@call" : "snchg"}
+"@snchg"
 {"id": "new_snapshot"}
 true
-{"@call" : "snchg"}
+"@snchg"
 null
 false
+"@unix_timestamp:@field:date"
+{"date":"21/06/04 02:43:20"}
+1622749400
+"@unix_timestamp:@field:date"
+{"date":""}
+-1

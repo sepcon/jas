@@ -1,0 +1,506 @@
+<!DOCTYPE html []>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="author" content="MarkdownViewer++" />
+    <title>readme.md</title>
+    <style type="text/css">
+            
+/* Avoid page breaks inside the most common attributes, especially for exports (i.e. PDF) */
+td, h1, h2, h3, h4, h5, p, ul, ol, li {
+    page-break-inside: avoid; 
+}
+
+        </style>
+  </head>
+  <body>
+    <h1 id="json-evaluable-syntax-jas">Json evAluable Syntax [JAS]</h1>
+    <h2 id="purposes">Purposes</h2>
+    <ul>
+      <li>Easy to parse evaluable syntax written in json</li>
+      <li>A set of expressions can be specified from file/network and change flexibly without modification from source code</li>
+      <li>Can be used to evaluate some kind of json-like data then determine further actions accordingly</li>
+    </ul>
+    <h2 id="definition">Definition</h2>
+    <ul>
+      <li>Everything is considered as Evaluable Expression and finally will be evaluated to a <em><strong>consumable value( json)</strong></em> or an exception will be thrown if an expression cannot be evaluated(invalid syntax, function not supported...)</li>
+      <li>Evaluable expression can be specified as input/arguments of other expression recursively and the nested one will always be evaluated first</li>
+      <li>The expressions will be applied on a(pair) of json(like) data and corresponding data will form a <em><strong>working context</strong></em>, the currently support only 2 contexts as last/last-snapshot data</li>
+    </ul>
+    <h3 id="syntax">Syntax:</h3>
+    <blockquote>
+      <pre>
+        <code>(1): {"@specifier": Evaluable, "#": "property_name"}
+(2): "@specifier[:@specifier1][:@specifier2]...[:@specifierN | string]"
+(3): "#property_name"
+(4): {"key1[:@specifier1],...[:@specifierN|string]": Evaluable, "key2": ...}
+(5): [Evaluable1, Evaluable2... EvaluableN]
+</code>
+      </pre>
+    </blockquote>
+    <ul>
+      <li>
+        <strong>specifier</strong> is a <code>keyword</code> that specifies an operation or a pre-defined parameter of an operation or a supported function. A specifier must begin with a <code>@</code> letter.</li>
+      <li>
+        <strong>[argument]</strong>  specifies input/argument of operation that specified by corresponding <code>specifier</code>. <code>argument</code> will always be evaluated once before passing to operation/parameter specified by <code>specifier</code></li>
+      <li>
+        <strong>property_name</strong> evaluated result of corresponding expression will be assigned to a property then can be queried later by expression (3):  <code>"#property_name"</code></li>
+      <li>
+        <strong>Syntax (1):</strong>  if <code>specifier</code> specifies an operation, or a function, the given syntax must be a json_object that has only single <code>specifier</code> and will be evaluated to single value, if having more than one <code>specifier</code>, the first one will be evaluated and the rest will be ignored.</li>
+      <li>
+        <strong>Syntax (2):</strong> Specifier must be an operation/function that will be evaluated to a single value, <code>specifierN</code> will be evaluated as <code>argument</code> of <code>specifierN-1</code>, the last argument can be a <code>string</code> and <code>string</code> will be directly pass to corresponding operation</li>
+      <li>
+        <strong>Syntax (3):</strong> queries corresponding property that previously set by <code>"#": "property_name"</code> in <strong><em>syntax (1)</em></strong></li>
+      <li>
+        <strong>Syntax (4):</strong> evaluates to a json_object looks like: <code>{ "key1" : value1, "key2": "value2" ...}</code></li>
+      <li>
+        <strong>Syntax (5):</strong> evaluates to a json_array looks like: <code>{ value1, value2, ..., valueN}</code></li>
+      <li>
+        <strong>
+          <em>Example:</em>
+        </strong>
+        <blockquote>
+          <pre>
+            <code>{"@plus": [1, 2, 3] }   ==&gt; 6
+{"@toupper" : "@field:name" } ==&gt; "SOME_NAME"
+{"@plus": [1,2], "@minus": [1,2], "#": "plus_result" }  ==&gt; -1 // @plus peration will be ignored, because  minus &lt; plus in string comparison
+"#plus_result" =&gt; -1
+"#not_assigned_property" ==&gt;  null
+{ "value1": "@current_time", "value2": { "@plus": [1, 2, 3] } } ==&gt; { "value1": 1623834906, "value2":  6 }
+[ "#plus_result", "@current_time", "@to_string:@current_time" ] ==&gt; [-1, 1623834906, "1623834906" ]
+</code>
+          </pre>
+        </blockquote>
+      </li>
+    </ul>
+    <h3 id="classification">Classification:</h3>
+    <ul>
+      <li>
+        <p>
+          <strong>Evaluable:</strong>
+          <code>&lt;evaluable&gt;</code> abstract concept of an <code>operation</code> or  <code>consumable value</code> that will finally be  evaluated to a consumable value</p>
+      </li>
+      <li>
+        <p>
+          <strong>Consumable:</strong>
+          <code>Json: number(floating point, integer), string, boolean, object, array</code>,</p>
+        <ul>
+          <li>
+            <strong>Note</strong>: a <code>string</code> must not begin with <code>@</code> letter and should not contains any <code>":@</code> sub-string in middle, if not it will be evaluated as an expression:</li>
+          <li>
+            <strong>Example:</strong>
+            <code>"value:@current_time</code> will be reconstructed as <code>{"value" : "@current_time"}</code></li>
+        </ul>
+      </li>
+      <li>
+        <p>
+          <strong>Arithmetical operators:</strong>
+          <code>&lt;arthm_op&gt;</code>
+        </p>
+        <ul>
+          <li>
+            <strong>Description:</strong> Apply arithmetical operator on on array of Evaluables that evaluated to <strong><em>values of same type</em></strong></li>
+          <li>
+            <strong>Syntax:</strong>
+            <code>{ "@operator": [arg1, arg2, ..., argN] }</code>
+            <ul>
+              <li>
+                <code>@operator:</code>
+                <ul>
+                  <li>
+                    <code>@bit_and</code> : <code>a &amp; b</code> -&gt; <strong>integer</strong> only</li>
+                  <li>
+                    <code>@bit_not</code>: <code>~a</code> -&gt; <strong>integer</strong> only</li>
+                  <li>
+                    <code>@bit_or</code>: <code>a|b</code> -&gt; <strong>integer</strong> only</li>
+                  <li>
+                    <code>@bit_xor</code>: <code>a^b</code> -&gt; <strong>integer</strong> only</li>
+                  <li>
+                    <code>@divides</code>: <code>a/b</code> -&gt; <strong>number</strong> only</li>
+                  <li>
+                    <code>@minus</code>: <code>a-b</code> -&gt; <strong>number</strong> only</li>
+                  <li>
+                    <code>@modulus</code>: <code>a%b</code> -&gt; <strong>integer</strong> only</li>
+                  <li>
+                    <code>@multiplies</code>: <code>a*b</code> -&gt; <strong>integer</strong> only</li>
+                  <li>
+                    <code>@negate</code>: <code>-b</code> -&gt; <strong>number</strong> only,</li>
+                  <li>
+                    <code>@plus</code>: <code>a+b</code> -&gt; <strong>number</strong> and <strong>string</strong></li>
+                </ul>
+              </li>
+              <li>
+                <code>[arg1, arg2, ..., argN]</code>: array of Evaluables that evaluated to json_array of same-type elements</li>
+              <li>
+                <code>supported types:</code> Number(integer/floating point) and <code>@plus</code> can be used for string concatenation as well</li>
+              <li>
+                <code>result type</code>: same as first argument</li>
+            </ul>
+          </li>
+          <li>
+            <strong>Example:</strong>
+            <ul>
+              <li>Valid:
+<ul><li><code>{"@plus":[1,2, ..., N]}</code> =&gt; <code>1 + 2 + ... + N</code></li><li><code>{"@plus":["hello", "world", "opswat client"]}</code> =&gt; <code>"hello" + "world" + "opswat client"</code></li><li><code>{"@negate":[1]}</code> =&gt; <code>-1</code></li></ul></li>
+              <li>Invalid
+<ul><li><code>{"@plus":[1,true]}</code> -&gt; arguments with mismatched types</li><li><code>{"@plus":[1]}</code> -&gt; missing 1 argument</li></ul></li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <p>
+          <strong>Logical operators</strong>: <code>&lt;logical_op&gt;</code></p>
+        <ul>
+          <li>
+            <p>
+              <strong>Description:</strong> Apply logical operator list/array of <code>Evaluables</code> that evaluated to boolean/number values</p>
+          </li>
+          <li>
+            <p>
+              <strong>Syntax:</strong>
+              <code>{ "@operator": [arg1, arg2, ..., argN] }</code>
+            </p>
+            <ul>
+              <li>
+                <code>@operator</code>:
+<ul><li><code>@and</code> : <code>a &amp;&amp; b</code></li><li><code>@or</code>: <code>a||b</code></li><li><code>@not</code>: <code>!b</code></li></ul></li>
+              <li>
+                <code>[arg1, arg2, ..., argN]</code>: array of Evaluables that evaluated to json_array of same-type of <code>integer/boolean</code></li>
+              <li>
+                <code>supported types:</code> boolean/number</li>
+              <li>
+                <code>result type:</code> Same type as parameters <code>(eval(integer+integer) = integer)</code></li>
+            </ul>
+          </li>
+          <li>
+            <p>
+              <strong>Example:</strong>
+            </p>
+            <ul>
+              <li>Valid:
+<ul><li><code>{"@and":[true, true, false]}</code> =&gt; <code>true &amp;&amp; true &amp;&amp; false</code>==&gt; false</li><li><code>{"@or":[1, 2]}</code> =&gt; <code>1 || 2</code>==&gt; 1</li></ul></li>
+              <li>Invalid
+<ul><li><code>{"@and":[1]}</code> -&gt; missing 1 argument</li><li><code>{"@and":[1, true]}</code> -&gt; type mismatched</li></ul></li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <p>
+          <strong>Comparison operators</strong>: <code>&lt;comparison_op&gt;</code></p>
+        <ul>
+          <li>
+            <strong>Description:</strong> Apply logical operator list/array of <code>exactly two Evaluables</code> that evaluated to <code>Consumable</code>value</li>
+          <li>
+            <strong>Syntax:</strong>
+            <code>{ "@operator": [arg1, arg2] }</code>
+            <ul>
+              <li>
+                <code>@operator</code>:
+<ul><li><code>@eq</code> : <code>a == b</code></li><li><code>@neq</code> : <code>a != b</code></li><li><code>@gt</code>: <code>a&gt;b</code></li><li><code>@ge</code>: <code>a&gt;=b</code></li><li><code>@lt</code>: <code>a&lt;b</code></li><li><code>@le</code>: <code>a&lt;=b</code></li></ul></li>
+              <li>
+                <code>[arg1, arg2]</code>: array of Evaluables that evaluated to json_array of <strong>exactly two</strong> same-type elements</li>
+              <li>
+                <code>supported types</code>: <code>json</code></li>
+              <li>
+                <code>result type</code>: <code>boolean</code></li>
+            </ul>
+          </li>
+          <li>
+            <strong>Example:</strong>
+            <ul>
+              <li>Valid:
+<ul><li><code>{"@eq":[1, 1]}</code> =&gt; <code>1 == 1</code>==&gt; true</li><li><code>{"@gt":["abc", "abcd"]}</code> =&gt; <code>"abc" &gt; "abcd"</code> ==&gt; false</li></ul></li>
+              <li>Invalid
+<ul><li><code>{"@eq":[1]}</code> -&gt; missing 1 argument</li><li><code>{"@eq":[1, "str"]}</code> -&gt; type mismatched</li><li><code>{"@eq":[1, 2,4] }</code>: -&gt; more than 2 args</li></ul></li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <p>
+          <strong>List operations:</strong>
+          <code>&lt;list_op&gt;</code>
+        </p>
+        <ul>
+          <li>
+            <p>
+              <strong>Description:</strong> Checks that a criteria/condition is satisfied on [one/all] item(s) of a given  list/array or not</p>
+          </li>
+          <li>
+            <p>
+              <strong>Syntax:</strong>
+            </p>
+            <blockquote>
+              <p>
+                <code>(1){"@operation":{"@cond": boolean, "@list": array}}</code>
+              </p>
+            </blockquote>
+            <ul>
+              <li>
+                <code>@cond</code>: <code>[Evaluable]</code>that must be evaluated as <strong>boolean</strong></li>
+              <li>
+                <code>@op</code>: <code>[Evaluable]</code> used for <code>@transform</code> operation,</li>
+              <li>
+                <code>@list</code>: <code>[Evaluable]</code> spmust be evaluated to array.</li>
+              <li>
+                <code>@item_id</code>: <code>[string]</code>: specifies unique field of a list item. Use this when want to compare corresponding values between two lists. if empty, item in 2 lists will be mapped by index.</li>
+              <li>
+                <code>Available operations</code>:
+<ul><li><code>@any_of</code> - <code>[return:boolean]</code>: evaluated to <code>true</code> if <code>@cond</code>is evaluated to <code>true</code>on any item of given list</li><li><code>@all_of</code> - <code>[return:boolean]</code>: evaluated to <code>true</code> if <code>@cond</code>is evaluated to <code>true</code>on all items of given list</li><li><code>@none_of</code> - <code>[return:boolean]</code>: evaluated to <code>true</code> if <code>@cond</code>is evaluated to <code>false</code>on all items of given list</li><li><code>@count_if</code> - <code>[return:integer]</code>: evaluated to number of items that satisfies <code>@cond</code></li><li><code>@filter_if</code> - <code>[return:array]</code>: pick the items that satisfy <code>@cond</code></li><li><code>@transform</code> - <code>[return:array]</code>: transforms each item in the given list to different form by Evaluable <code>@op</code></li><li><strong>NOTE:</strong> to check a list is empty we can specify as: <code>{"@any_of" : true} or {"@any_of": {"@list": "$field:the_list", "@cond" : true}}</code></li></ul></li>
+            </ul>
+          </li>
+          <li>
+            <p>
+              <strong>Example:</strong>
+            </p>
+            <ul>
+              <li>
+                <p>Valid:</p>
+                <blockquote>
+                  <pre>
+                    <code>{
+ "@any_of": {
+   "@list": "anti-malware",
+   "@item_id": "ID",
+   "@cond": {
+     "@eq": [ "@field:rtp_enabled",  1 ]
+  }
+ }
+}
+</code>
+                  </pre>
+                </blockquote>
+                <blockquote>
+                  <p>
+                    <code>"@size_of: [1,2,3]"</code> =&gt; 3</p>
+                </blockquote>
+                <blockquote>
+                  <p>
+                    <code>{"@count_if":{ "@list": [1,2,3,4], "@cond:@gt": [ "@field", 2] }}</code> =&gt; 2</p>
+                </blockquote>
+              </li>
+              <li>
+                <p>Invalid</p>
+                <blockquote>
+                  <pre>
+                    <code>{
+ "@any_of": {
+   "@path": "anti-malware",
+   "@cond": "@current_time"
+ }
+}
+-&gt; why: @current_time will be evaluated to integer instead of boolean  
+</code>
+                  </pre>
+                </blockquote>
+              </li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <p>
+          <strong>EvaluableArray:</strong>
+        </p>
+        <ul>
+          <li>
+            <strong>Description:</strong> specifies an array of Evaluables. output will be array of corresponding Evaluated value</li>
+          <li>
+            <strong>Sample:</strong>
+            <code>[{"@plus": [1,2]}, "@to_string:100"]</code> --&gt; <code>[3, "100"]</code></li>
+        </ul>
+      </li>
+      <li>
+        <p>
+          <strong>EvaluableMap:</strong>
+        </p>
+        <ul>
+          <li>
+            <strong>Description:</strong> Similar to EvaluableArray, that specifies mapping of Keys-Evaluables. Output will be JsonObject</li>
+          <li>
+            <strong>Sample:</strong>
+            <blockquote>
+              <pre>
+                <code>{ 
+   "one_and_two": {"@plus": [1,2]},
+   "one_hundred": "@to_string:100"
+}
+--&gt; 
+{ 
+   "one_and_two": 3,
+   "one_hundred": "100"
+}
+</code>
+              </pre>
+            </blockquote>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <p>
+          <strong>Context/ContextProperty:</strong>
+        </p>
+        <ul>
+          <li>
+            <strong>Description:</strong>
+            <ul>
+              <li>
+                <p>
+                  <strong>Context</strong>: Each Evaluable is evaluated in a <code>context</code> where having its own evaluated results, and cached results for re-use
+and differentiate with other <code>context</code>. Like a function in other programming languages(C++/Java...)
+each has a context to specify the variables for computation.</p>
+              </li>
+              <li>
+                <p>
+                  <strong>ContextProperty:</strong> is similar variable in function and has accessing scope. it is designed to store constant value
+or evaluated result from other Evaluable for using later.</p>
+                <ul>
+                  <li>Can be declare inside the definition of an Operation/Function/EvaluableMap</li>
+                  <li>ContextProperty(Property) has its own scope, and can only be accessed from its/its-sub scopes(Context)</li>
+                  <li>If Property is not found in current context(scope), it will be looked up in parent context until root context</li>
+                  <li>Property can be declared to be visible in global context for accessing later by Evaluables in all other contexts</li>
+                </ul>
+              </li>
+            </ul>
+          </li>
+          <li>
+            <strong>Syntax:</strong>
+            <code>$variable_name</code> - this identical to Property specified by <code>#</code> in above section.
+<ul><li>To store a variable in global(root) context, use <code>$$</code></li></ul></li>
+          <li>
+            <strong>Example:</strong>
+          </li>
+        </ul>
+        <blockquote>
+          <pre>
+            <code>{
+  "$cur_time": "@current_time",
+  "expired_duration:@minus": ["$cur_time", "@field:last_update_time"]
+} 
+--&gt; might results in:
+{
+   "expired_duration": 64800
+}```
+</code>
+          </pre>
+        </blockquote>
+      </li>
+      <li>
+        <p>
+          <strong>Function</strong>:</p>
+        <ul>
+          <li>
+            <p>
+              <strong>Description:</strong>  invokes a function that supported by default or by <code>current_context</code></p>
+          </li>
+          <li>
+            <p>
+              <strong>Syntax:</strong>
+            </p>
+            <blockquote>
+              <pre>
+                <code>(1){ "@function_name":  Evaluable}
+(2) "@function_name[:@function_name1]...[:@function_nameN/string]"
+</code>
+              </pre>
+            </blockquote>
+            <ul>
+              <li>
+                <code>@function_name</code>: name of function to be invoked, if <code>function_name</code> does not supported by default or by current context, exception will be thrown.</li>
+              <li>
+                <code>Evaluable</code>: an evaluable syntax that will be evaluated as <code>function</code>'s argument(s)</li>
+            </ul>
+          </li>
+          <li>
+            <p>
+              <strong>Example:</strong>
+            </p>
+            <ul>
+              <li>
+                <code>"@current_time"</code>
+              </li>
+              <li>
+                <code>{"@cmp_ver": ["1.2.123", "1.19.123"]}</code>
+              </li>
+            </ul>
+          </li>
+          <li>
+            <p>
+              <strong>Predefined functions</strong>:</p>
+            <blockquote>
+              <ul>
+                <li>
+                  <code>@current_time</code>:  <code>(-&gt;integer)</code> get unix-time timestamp of system_clock</li>
+                <li>
+                  <code>@tolower: string</code>: <code>(-&gt;string)</code>converts a string to lower case</li>
+                <li>
+                  <code>@tolupper: string</code>: <code>(-&gt;string)</code> converts a string to upper case</li>
+                <li>
+                  <code>@snchg</code>
+                  <code>(-&gt;boolean)</code> return true if last/cur data snapshot in current context are different</li>
+                <li>
+                  <code>@prop: string</code> : <code>(-&gt;json)</code>gets value of an assigned property - same as "#property_name"</li>
+                <li>
+                  <code>@cmp_ver: ["v1", "v2"]</code>:  <code>(-&gt;integer)</code>compare the strings as versions(<code>-1: v1 &lt; v2, 0: equal, 1: v1&gt;v2</code>)</li>
+                <li>
+                  <code>@eq_ver: ["v1", "v2"]</code>:  <code>(-&gt;integer)</code> true if <code>v1 == v2</code></li>
+                <li>
+                  <code>@ne_ver: ["v1", "v2"]</code>:  <code>(-&gt;integer)</code> true if <code>v1 != v2</code></li>
+                <li>
+                  <code>@gt_ver: ["v1", "v2"]</code>:  <code>(-&gt;integer)</code> true if <code>v1 &gt; v2</code></li>
+                <li>
+                  <code>@lt_ver: ["v1", "v2"]</code>:  <code>(-&gt;integer)</code> true if <code>v1 &lt; v2</code></li>
+                <li>
+                  <code>@ge_ver: ["v1", "v2"]</code>:  <code>(-&gt;integer)</code> true if <code>v1 &gt;= v2</code></li>
+                <li>
+                  <code>@le_ver: ["v1", "v2"]</code>:  <code>(-&gt;integer)</code> true if <code>v1 &lt;= v2</code></li>
+                <li>
+                  <code>@contains: ["s1", "s2"]</code>:<code>(-&gt;boolean)</code> true if <code>s2</code> appears in <code>s1</code></li>
+                <li>
+                  <code>@unix_timestamp: string</code>:  <code>(-&gt;integer)</code>converts a string that represents a date_time to unix
+time_stamp</li>
+                <li>
+                  <code>@has_null_val: array/object</code>:<code>(-&gt;boolean)</code> true if given array/object contains any null value</li>
+                <li>
+                  <code>@size_of: Evaluable</code>: <code>(-&gt;unsigned integer)</code> return the size of given object/array</li>
+                <li>
+                  <code>... add more ...</code>
+                </li>
+              </ul>
+            </blockquote>
+          </li>
+          <li>
+            <p>
+              <strong>Special functions</strong>: Bellow functions are for accessing historical input data</p>
+            <blockquote>
+              <ul>
+                <li>
+                  <code>@hfield</code>: select the data of field that contains both last snapshot and current snapshot, return of this function must not be consume dirrectly by evaluable operations
+<ul><li>input:
+<ul><li><code>[string]</code>: path to the field. E.g: <code>/Antivirus/product/name</code></li><li><code>[JsonObject]: {"path": "path/to/field", "iid": "item_id"}</code>, for field that points to a list only</li></ul></li><li>return: <code>JsonObject</code></li></ul></li>
+                <li>
+                  <code>@hfield2arr</code>: shorthand for <code>@hfield</code>, for case field points to an array
+<ul><li>input:  <code>["path/to/field", "iid": "item_id"]</code> -&gt;  array contains 2 elements</li><li>return: <code>JsonObject</code></li><li>E.g: <code>{"@hfield2arr": ["Antivirus/Threats", "ID"]}</code></li></ul></li>
+                <li>
+                  <code>@field</code>: select a field, the result contains value of current or last snapshot only
+<ul><li>input:
+<ul><li><code>String: path/to/field</code> -&gt; will select value of field in current snapshot</li><li><code>Object: { "path": "path/to/field", "snapshot": "last/cur"}</code> -&gt; select the field in specific snapshot</li></ul></li><li>return: <code>Json</code></li></ul></li>
+                <li>
+                  <code>@field_cv</code>: select value of field in current snapshot - more explicit than field
+<ul><li>input: <code>String: path/to/field</code></li><li>return: <code>Json</code></li></ul></li>
+                <li>
+                  <code>@field_lv</code>: select value of field in last snapshot - shorthand for selecting field in last snapshot
+<ul><li>input: <code>String: path/to/field</code></li><li>return: <code>Json</code></li></ul></li>
+              </ul>
+              <pre>
+                <code></code>
+              </pre>
+            </blockquote>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </body>
+</html>

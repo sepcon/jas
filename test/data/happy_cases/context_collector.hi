@@ -1,12 +1,24 @@
-{"@value_of":"id"}
+{"@field":"id"}
 {"id":1,"int1":1,"int2":1,"string1":"1","string2":"2"}
 1
-{"@value_of":"string1"}
+{"@field":"string1"}
 {"id":1,"int1":1,"int2":1,"string1":"1","string2":"2"}
 "1"
-{"@value_of":{"@path":"string1","@snapshot":1}}
+{"@field":{"path":"string1","snapshot":"cur"}}
 {"id":1,"int1":1,"int2":1,"string1":"1","string2":"2"}
 "1"
-{"@value_of":{"@path":"string1","@snapshot":0}}
+{"@field":{"path":"string1","snapshot":"last"}}
 {"id":1,"int1":1,"int2":1,"string1":"1","string2":"2"}
 null
+"@field : object/string"
+{"id":1,"int1":1,"int2":1,"string1":"1","string2":"2","object":{"string":"string","int":10,"bool":true}}
+"string"
+"@field: object/int "
+{"id":1,"int1":1,"int2":1,"string1":"1","string2":"2","object":{"string":"string","int":10,"bool":true}}
+10
+"@field:/object/int/bool"
+{"id":1,"int1":1,"int2":1,"string1":"1","string2":"2","object":{"string":"string","int":10,"bool":true}}
+null
+{"@count_if":{"@list": {"@field":{"iid": "id"}}, "@cond:@eq":["@field:value", "3"]}}
+[{"id": 2, "value": "2"}, {"id": 3, "value": "3"}]
+1

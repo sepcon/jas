@@ -1,86 +1,208 @@
+#include <chrono>
+#include <filesystem>
 #include <fstream>
-#include <iostream>
+#include <thread>
 
-#include "Invocable.h"
-#include "JEvalContext.h"
+#include "CIF.h"
+#include "ConsoleLogger.h"
+#include "HistoricalEvalContext.h"
 #include "Json.h"
+#include "Keywords.h"
+#include "Parser.h"
 #include "SyntaxEvaluator.h"
 #include "SyntaxValidator.h"
+#include "Version.h"
 
 using namespace std;
 using namespace jas;
+using namespace chrono_literals;
+namespace fs = std::filesystem;
+using chrono::system_clock;
 
-#include "Parser.h"
+static const CharType* JASE_TITLE = JASSTR("JAS - Json evAluation Syntax");
+struct __CloggerSection {
+  __CloggerSection(const String& sectionName) {
+    __clogger << "==> " << sectionName << ":\n"
+              << std::setfill(JASSTR('-')) << setw(sectionName.size() + 6)
+              << "\n";
+  }
+  ~__CloggerSection() {
+    __clogger << std::setfill(JASSTR('-')) << setw(30) << '\n';
+  }
+};
 
-OStream& operator<<(OStream& os, const DirectVal& e) {
-  os << JsonTrait::dump(e.value);
-  return os;
+#include <mutex>
+void showHelp(int exitCode = -1) {
+  __CloggerSection showTitleSct{JASE_TITLE};
+  clogger() << JASSTR(
+      R"(JASE - JAS Evaluator: Parse jas.dat file that contains jas syntax and data for evaluation and show the
+evaluated result!
+
+Usage1: jase.exe /path/to/jas.dat
+    structure of jas.dat:
+    - line1: jas syntax (json)
+    - [line2]: (optional) current input data (json), historically - current snapshot
+    - [line3]: (optional) last input data (json), historically - last snapshot
+
+Usage2: jase.exe [--help|--keywords|--version]
+    - help: show help instruction and exit
+    - keywords: display available keywords
+    - version: display current JAS version
+)");
+
+  exit(exitCode);
 }
 
-int main() {
-  using namespace json11;
-  string serr;
-  auto jrules = Json::parse(
-      R"(
-{
-  "Backup": {
-    "#": "Backup",
-    "@any_of": {
-      "@list": "@value_of:BackupClient",
-      "@cond:@gt": [
-        {
-          "@minus": [
-            "@current_time",
-            "@value_of:Last Backup Time"
-          ]
-        },
-        604800
-      ]
+template <class... Msgs>
+void exitIf(bool condition, const Msgs&... msg) {
+  if (condition) {
+    auto clg = clogger();
+    clg << "ERROR: ";
+    (clg << ... << msg);
+    exit(-1);
+  }
+}
+
+void showSupportedKeywords() {
+  __CloggerSection showTitleSct{JASE_TITLE};
+  HistoricalEvalContext ctxt;
+  auto functions = ctxt.supportedFunctions();
+  auto displaySequence = [](const auto& sequence, const auto& prefix) {
+    size_t maxLen = 0;
+    int i = 0;
+    for (auto& str : sequence) {
+      if (str.size() > maxLen) {
+        maxLen = str.size();
+      }
     }
-  },
-  "lower": "@value_of:@toupper:Hello",
-  "report_if": "@evchg:#Backup"
-}
-)",
-      serr);
-
-  auto joldDoc = Json::parse(R"_json(
-{"HELLO": "World", "Antiphishing":[{"Enabled":1,"ID":102,"IsEnabledSupported":1,"PRODUCT_NAME":"Internet Explorer (x64)","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"Enabled":1,"ID":3103,"IsEnabledSupported":1,"PRODUCT_NAME":"Microsoft Edge","VENDOR":"Microsoft Corporation","VERSION":"91.0.864.37"},{"Enabled":1,"ID":103,"IsEnabledSupported":1,"PRODUCT_NAME":"Internet Explorer (x86)","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"AR_ID":"41","Enabled":0,"ID":41,"IsEnabledSupported":1,"PRODUCT_NAME":"Google Chrome","VENDOR":"Google Inc.","VERSION":"90.0.4430.212"}],"Antivirus":[{"Data File DateTime":"2021/5/30 15:11:32","Data File Engine Version":"1.1.18100.6","Data File Version":"1.339.1690.0","ID":477,"IsDataFileDateTimeSupported":1,"IsLastFullScanTimeSupported":1,"IsRunningSupported":1,"Last Full Scan Time":"2021/5/29 19:31:7","PRODUCT_NAME":"Windows Defender","Running":1,"Threats":[],"VENDOR":"Microsoft Corporation","VERSION":"4.18.2104.14"}],"BackupClient":[{"ID":935,"IsLastBackupTimeSupported":1,"Is_Cloud_Storage":0,"Last Backup Time":"","PRODUCT_NAME":"Windows Backup and Restore","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":936,"IsLastBackupTimeSupported":1,"Is_Cloud_Storage":0,"Last Backup Time":"","PRODUCT_NAME":"Windows File History","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}],"Browser":[{"ID":102,"PRODUCT_NAME":"Internet Explorer","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"ID":3103,"PRODUCT_NAME":"Microsoft Edge","VENDOR":"Microsoft Corporation","VERSION":"91.0.864.37"},{"ID":103,"PRODUCT_NAME":"Internet Explorer","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"AR_ID":"41","ID":41,"PRODUCT_NAME":"Google Chrome","VENDOR":"Google Inc.","VERSION":"90.0.4430.212"}],"Cleaner_Optimizer":[],"Cloud_Storage":[],"CustomCheck":[{"hash":"cfe9919aff46c80210c4de472ca63873","last_run":"2021-05-30T17:26:32Z","last_update":"","msg":"[Sun May 30 11:26:26 2021] Job list: Definitions_Update Enable_Defender Startup_Quick_Scan Weekly_Full_Scan Windows_Update [Sun May 30 11:26:26 2021] > Windows_Update job already exists     - OVERWRITE = FALSE [Sun May 30 11:26:26 2021] > Enable_Defender job already exists    - OVERWRITE = FALSE [Sun May 30 11:26:26 2021] > Startup_Quick_Scan job already exists - OVERWRITE = FALSE [Sun May 30 11:26:26 2021] > Weekly_Full_Scan job already exists   - OVERWRITE = TRUE [Sun May 30 11:26:26 2021] > Weekly_Full_Scan job   UNREGISTERED [Sun May 30 11:26:27 2021] Job list: Definitions_Update Enable_Defender Startup_Quick_Scan Windows_Update [Sun May 30 11:26:27 2021] > Weekly_Full_Scan job does not exist [Sun May 30 11:26:27 2021] > Weekly_Full_Scan job   CREATED [Sun May 30 11:26:28 2021] > Weekly_Full_Scan task  RUN AS SYSTEM [Sun May 30 11:26:29 2021] Job list: Definitions_Update Enable_Defender Startup_Quick_Scan Weekly_Full_Scan Windows_Update [Sun May 30 11:26:29 2021] > Definitions_Update job already exists - OVERWRITE = FALSE [Sun May 30 11:26:29 2021] > Chrome settings are CORRECT [Sun May 30 11:26:29 2021] > Edge settings are CORRECT [Sun May 30 11:26:29 2021] > Firefox is NOT INSTALLED [Sun May 30 11:26:29 2021] > Outlook-Skype settings are CORRECT   Script Completed with 228 Errors.","status":1}],"Data_Loss_Prevention":[],"Developer_Tool":[],"Firewall":[{"Enabled":0,"ID":288,"IsEnabledSupported":1,"PRODUCT_NAME":"Windows Firewall","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}],"Hard_Disk_Encryption":{"SystemVolume":"C:\\WINDOWS\\system32","isGenericSystemVolumeEncrypted":false,"products":[{"Encrypted_Volumes":{"C:":{"Decryption_In_Progress":{"ENCRYPTIONPROGRESS":0},"Encryption_Algorithm":{"Algorithm":"aes","Key_Length":128,"Mode_of_Operation":0},"Encryption_In_Progress":{"ENCRYPTIONPROGRESS":0},"Encryption_State":{"ENCRYPTIONSTATE":2},"Location_Encryptable":true,"Location_Type":"physical"}},"EncryptionStateSupported":0,"ID":882,"PRODUCT_NAME":"BitLocker Drive Encryption","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}]},"Instant_Messegener":[{"ID":1056,"PRODUCT_NAME":"Microsoft Lync ","Status":1,"VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":2059,"PRODUCT_NAME":"Slack","Status":2,"VENDOR":"Slack Technologies, Inc.","VERSION":"4.16.1"},{"ID":1872,"PRODUCT_NAME":"Zoom","Status":1,"VENDOR":"Zoom Video Communications, Inc.","VERSION":"5.4.9"},{"ID":3063,"PRODUCT_NAME":"Telegram","Status":1,"VENDOR":"Telegram Messenger LLP","VERSION":"2.5.1"},{"ID":3089,"PRODUCT_NAME":"Microsoft Teams","Status":2,"VENDOR":"Microsoft Corporation","VERSION":"1.4.00.11161"}],"Media_Player":[],"Operating_System_Info":[{"ActiveUserSession":0,"Domain":"us.opswat.com","Last_Reboot":1620910884,"Last_Windows_Update_Check":"","LockScreenTimeout":300,"MachineType":1,"Network_adapters":{"Network_adapter 1":{"IPV4":"","IPV6":"","MAC":"00:FF:2A:35:43:8F","adapter_enabled":false,"description":"TAP-Windows Adapter V9","dhcp_enabled":false,"media_state":"media_disconnected"},"Network_adapter 2":{"IPV4":"","IPV6":"","MAC":"4C:EB:BD:68:3F:0C","adapter_enabled":false,"description":"Bluetooth Device (Personal Area Network)","dhcp_enabled":true,"media_state":"media_disconnected"},"Network_adapter 3":{"IPV4":"","IPV6":"","MAC":"98:FC:84:EC:64:16","adapter_enabled":false,"description":"Realtek USB GbE Family Controller","dhcp_enabled":true,"media_state":"media_disconnected"},"Network_adapter 4":{"IPV4":"192.168.0.16","IPV6":"","MAC":"4C:EB:BD:68:3F:0B","adapter_enabled":true,"default_gateways":["192.168.0.1"],"description":"Qualcomm QCA61x4A 802.11ac Wireless Adapter","dhcp_enabled":true,"dhcp_lease_expires":"1622481395","dhcp_lease_obtained":"1622394995","dhcp_server_address":"192.168.0.1","dns_server_addresses":["24.116.0.53","24.116.2.50"],"media_state":"connected","subnet_masks":["255.255.255.0"]},"Network_adapter 5":{"IPV4":"","IPV6":"","MAC":"34:48:ED:33:0A:31","adapter_enabled":false,"description":"Intel(R) Ethernet Connection (6) I219-LM","dhcp_enabled":true,"media_state":"media_disconnected"}},"OS_Architecture":"64-bit","OS_Family":"Windows","OS_Id":"60","OS_Language":"English (United States)","OS_Name":"Microsoft Windows 10 Pro","OS_Vendor":"Microsoft Corp.","OS_Version":"10.0.19042","Service_Pack_Version":"0.0","SysVolumeFree":"312GB","SysVolumeTotal":"476GB","SystemVolume":"C:\\WINDOWS\\system32","UserPasswordSet":1,"Username":"ttruong"}],"PUA":[{"ID":3346,"PRODUCT_NAME":"TeamViewer","VENDOR":"TeamViewer GmbH","VERSION":"15.15.5"},{"ID":1872,"PRODUCT_NAME":"Zoom","VENDOR":"Zoom Video Communications, Inc.","VERSION":"5.4.9"}],"PublicFileSharing":[{"Status":0}],"Recording_Web_Meeting":[],"Remote_Control":[{"ID":1872,"PRODUCT_NAME":"Zoom","Status":1,"VENDOR":"Zoom Video Communications, Inc.","VERSION":"5.4.9"},{"AR_ID":"815","ID":815,"PRODUCT_NAME":"PuTTY","Status":1,"VENDOR":"PuTTY","VERSION":"0.74"},{"ID":3059,"PRODUCT_NAME":"Remote Desktop Connection","Status":1,"VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":3090,"PRODUCT_NAME":"GoToMeeting","Status":1,"VENDOR":"LogMeIn, Inc.","VERSION":"10.16.1.19709"},{"ID":3346,"PRODUCT_NAME":"TeamViewer","Status":1,"VENDOR":"TeamViewer GmbH","VERSION":"15.15.5"},{"ID":3124,"PRODUCT_NAME":"VMware Horizon Client","Status":1,"VENDOR":"VMware, Inc.","VERSION":"8.2.0.18176"}],"Toolbars":[],"Unclassified":[{"AR_ID":"108","ID":108,"PRODUCT_NAME":"WinRAR (x64)","VENDOR":"Alexander Roshal","VERSION":"5.91.0"},{"ID":1152,"PRODUCT_NAME":"Microsoft PowerPoint","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":2819,"PRODUCT_NAME":"Adobe Acrobat Reader DC Continuous","VENDOR":"Adobe Systems Inc.","VERSION":"21.001.20155"},{"ID":1151,"PRODUCT_NAME":"Microsoft Publisher","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":1214,"PRODUCT_NAME":"Microsoft Excel","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":3102,"PRODUCT_NAME":"Teams Machine-Wide Installer","VENDOR":"Microsoft Corporation","VERSION":"1.4.0.7174"},{"ID":1153,"PRODUCT_NAME":"Microsoft Outlook","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":1154,"PRODUCT_NAME":"Microsoft OneNote","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":1527,"PRODUCT_NAME":"Total Commander (x64)","VENDOR":"Ghisler Software GmbH","VERSION":"9.51"},{"ID":1634,"PRODUCT_NAME":"Windows Media Player","VENDOR":"Microsoft Corporation","VERSION":"12.0.19041.1"},{"ID":1225,"PRODUCT_NAME":"Microsoft Word","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"AR_ID":"303","ID":303,"PRODUCT_NAME":"Notepad++ (x86)","VENDOR":"Notepad++ Team","VERSION":"7.9.1"},{"AR_ID":"200","ID":200,"PRODUCT_NAME":"7-Zip (x64)","VENDOR":"Igor Pavlov","VERSION":"19.00"},{"AR_ID":"211","ID":211,"PRODUCT_NAME":"Wireshark (x64)","VENDOR":"The Wireshark developer community","VERSION":"3.4.5"},{"ID":3306,"PRODUCT_NAME":"DirectX","VENDOR":"Microsoft Corporation","VERSION":"12"},{"ID":2807,"PRODUCT_NAME":"Notepad","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":2815,"PRODUCT_NAME":"Paint","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":2925,"PRODUCT_NAME":"WordPad","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":3029,"PRODUCT_NAME":"Microsoft Office 365","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":3000,"PRODUCT_NAME":"OPSWAT Client","VENDOR":"OPSWAT, Inc.","VERSION":"7.6.455.0"},{"ID":3109,"PRODUCT_NAME":"Microsoft .NET Framework 4","VENDOR":"Microsoft Corporation","VERSION":"4.8.4084.0"},{"ID":3123,"PRODUCT_NAME":"Microsoft XML Parser 3","VENDOR":"Microsoft Corporation","VERSION":"8.110.19041.844"},{"ID":3202,"PRODUCT_NAME":"Microsoft Visual Studio Code (User)","VENDOR":"Microsoft Corporation","VERSION":"1.51.0"},{"ID":3259,"PRODUCT_NAME":"Microsoft Visual C++ 2015-2019 Redistributable (x64)","VENDOR":"Microsoft Corporation","VERSION":"14.28.29910.0"},{"ID":3205,"PRODUCT_NAME":"Microsoft XML Parser 6","VENDOR":"Microsoft Corporation","VERSION":"6.30.19041.906"},{"ID":3228,"PRODUCT_NAME":"Python 2.7 64-bit","VENDOR":"Python Software Foundation","VERSION":"2.7.17"},{"ID":3258,"PRODUCT_NAME":"Microsoft Visual C++ 2015-2019 Redistributable (x86)","VENDOR":"Microsoft Corporation","VERSION":"14.27.29016.0"},{"ID":3340,"PRODUCT_NAME":"Node.js Current","VENDOR":"Joyent, Inc.","VERSION":"15.5.1"}],"Unclassified_PUA":[],"Uninstaller":[],"VPN_Client":[{"ID":1119,"PRODUCT_NAME":"Windows VPN Client","Status":1,"VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}],"Virtual_Machine":[]}
-)_json",
-                             serr);
-
-  auto jnewDoc = Json::parse(R"_json(
-{"Antiphishing":[{"Enabled":1,"ID":102,"IsEnabledSupported":2,"PRODUCT_NAME":"Internet Explorer (x64)","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"Enabled":1,"ID":3103,"IsEnabledSupported":1,"PRODUCT_NAME":"Microsoft Edge","VENDOR":"Microsoft Corporation","VERSION":"91.0.864.37"},{"Enabled":1,"ID":103,"IsEnabledSupported":1,"PRODUCT_NAME":"Internet Explorer (x86)","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"AR_ID":"41","Enabled":1,"ID":41,"IsEnabledSupported":1,"PRODUCT_NAME":"Google Chrome","VENDOR":"Google Inc.","VERSION":"90.0.4430.212"}],"Antivirus":[{"Data File DateTime":"2021/5/30 15:11:32","Data File Engine Version":"1.1.18100.6","Data File Version":"1.339.1690.0","ID":477,"IsDataFileDateTimeSupported":1,"IsLastFullScanTimeSupported":1,"IsRunningSupported":1,"Last Full Scan Time":"2021/5/29 19:31:7","PRODUCT_NAME":"Windows Defender","Running":1,"Threats":[],"VENDOR":"Microsoft Corporation","VERSION":"4.18.2104.14"}],"BackupClient":[{"ID":935,"IsLastBackupTimeSupported":1,"Is_Cloud_Storage":0,"Last Backup Time":1622440012,"PRODUCT_NAME":"Windows Backup and Restore","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":936,"IsLastBackupTimeSupported":1,"Is_Cloud_Storage":0,"Last Backup Time":"","PRODUCT_NAME":"Windows File History","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}],"Browser":[{"ID":102,"PRODUCT_NAME":"Internet Explorer","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"ID":3103,"PRODUCT_NAME":"Microsoft Edge","VENDOR":"Microsoft Corporation","VERSION":"91.0.864.37"},{"ID":103,"PRODUCT_NAME":"Internet Explorer","VENDOR":"Microsoft Corporation","VERSION":"11.789.19041.0"},{"AR_ID":"41","ID":41,"PRODUCT_NAME":"Google Chrome","VENDOR":"Google Inc.","VERSION":"90.0.4430.212"}],"Cleaner_Optimizer":[],"Cloud_Storage":[],"CustomCheck":[{"hash":"cfe9919aff46c80210c4de472ca63873","last_run":"2021-05-30T17:26:32Z","last_update":"","msg":"[Sun May 30 11:26:26 2021] Job list: Definitions_Update Enable_Defender Startup_Quick_Scan Weekly_Full_Scan Windows_Update [Sun May 30 11:26:26 2021] > Windows_Update job already exists     - OVERWRITE = FALSE [Sun May 30 11:26:26 2021] > Enable_Defender job already exists    - OVERWRITE = FALSE [Sun May 30 11:26:26 2021] > Startup_Quick_Scan job already exists - OVERWRITE = FALSE [Sun May 30 11:26:26 2021] > Weekly_Full_Scan job already exists   - OVERWRITE = TRUE [Sun May 30 11:26:26 2021] > Weekly_Full_Scan job   UNREGISTERED [Sun May 30 11:26:27 2021] Job list: Definitions_Update Enable_Defender Startup_Quick_Scan Windows_Update [Sun May 30 11:26:27 2021] > Weekly_Full_Scan job does not exist [Sun May 30 11:26:27 2021] > Weekly_Full_Scan job   CREATED [Sun May 30 11:26:28 2021] > Weekly_Full_Scan task  RUN AS SYSTEM [Sun May 30 11:26:29 2021] Job list: Definitions_Update Enable_Defender Startup_Quick_Scan Weekly_Full_Scan Windows_Update [Sun May 30 11:26:29 2021] > Definitions_Update job already exists - OVERWRITE = FALSE [Sun May 30 11:26:29 2021] > Chrome settings are CORRECT [Sun May 30 11:26:29 2021] > Edge settings are CORRECT [Sun May 30 11:26:29 2021] > Firefox is NOT INSTALLED [Sun May 30 11:26:29 2021] > Outlook-Skype settings are CORRECT   Script Completed with 228 Errors.","status":1}],"Data_Loss_Prevention":[],"Developer_Tool":[],"Firewall":[{"Enabled":1,"ID":288,"IsEnabledSupported":1,"PRODUCT_NAME":"Windows Firewall","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}],"Hard_Disk_Encryption":{"SystemVolume":"C:\\WINDOWS\\system32","isGenericSystemVolumeEncrypted":false,"products":[{"Encrypted_Volumes":{"C:":{"Decryption_In_Progress":{"ENCRYPTIONPROGRESS":0},"Encryption_Algorithm":{"Algorithm":"aes","Key_Length":128,"Mode_of_Operation":0},"Encryption_In_Progress":{"ENCRYPTIONPROGRESS":0},"Encryption_State":{"ENCRYPTIONSTATE":2},"Location_Encryptable":true,"Location_Type":"physical"}},"EncryptionStateSupported":0,"ID":882,"PRODUCT_NAME":"BitLocker Drive Encryption","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}]},"Instant_Messegener":[{"ID":1056,"PRODUCT_NAME":"Microsoft Lync ","Status":1,"VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":2059,"PRODUCT_NAME":"Slack","Status":2,"VENDOR":"Slack Technologies, Inc.","VERSION":"4.16.1"},{"ID":1872,"PRODUCT_NAME":"Zoom","Status":1,"VENDOR":"Zoom Video Communications, Inc.","VERSION":"5.4.9"},{"ID":3063,"PRODUCT_NAME":"Telegram","Status":1,"VENDOR":"Telegram Messenger LLP","VERSION":"2.5.1"},{"ID":3089,"PRODUCT_NAME":"Microsoft Teams","Status":2,"VENDOR":"Microsoft Corporation","VERSION":"1.4.00.11161"}],"Media_Player":[],"Operating_System_Info":[{"ActiveUserSession":0,"Domain":"us.opswat.com","Last_Reboot":1620910884,"Last_Windows_Update_Check":"","LockScreenTimeout":300,"MachineType":1,"Network_adapters":{"Network_adapter 1":{"IPV4":"","IPV6":"","MAC":"00:FF:2A:35:43:8F","adapter_enabled":false,"description":"TAP-Windows Adapter V9","dhcp_enabled":false,"media_state":"media_disconnected"},"Network_adapter 2":{"IPV4":"","IPV6":"","MAC":"4C:EB:BD:68:3F:0C","adapter_enabled":false,"description":"Bluetooth Device (Personal Area Network)","dhcp_enabled":true,"media_state":"media_disconnected"},"Network_adapter 3":{"IPV4":"","IPV6":"","MAC":"98:FC:84:EC:64:16","adapter_enabled":false,"description":"Realtek USB GbE Family Controller","dhcp_enabled":true,"media_state":"media_disconnected"},"Network_adapter 4":{"IPV4":"192.168.0.16","IPV6":"","MAC":"4C:EB:BD:68:3F:0B","adapter_enabled":true,"default_gateways":["192.168.0.1"],"description":"Qualcomm QCA61x4A 802.11ac Wireless Adapter","dhcp_enabled":true,"dhcp_lease_expires":"1622481395","dhcp_lease_obtained":"1622394995","dhcp_server_address":"192.168.0.1","dns_server_addresses":["24.116.0.53","24.116.2.50"],"media_state":"connected","subnet_masks":["255.255.255.0"]},"Network_adapter 5":{"IPV4":"","IPV6":"","MAC":"34:48:ED:33:0A:31","adapter_enabled":false,"description":"Intel(R) Ethernet Connection (6) I219-LM","dhcp_enabled":true,"media_state":"media_disconnected"}},"OS_Architecture":"64-bit","OS_Family":"Windows","OS_Id":"60","OS_Language":"English (United States)","OS_Name":"Microsoft Windows 10 Pro","OS_Vendor":"Microsoft Corp.","OS_Version":"10.0.19042","Service_Pack_Version":"0.0","SysVolumeFree":"312GB","SysVolumeTotal":"476GB","SystemVolume":"C:\\WINDOWS\\system32","UserPasswordSet":1,"Username":"ttruong"}],"PUA":[{"ID":3346,"PRODUCT_NAME":"TeamViewer","VENDOR":"TeamViewer GmbH","VERSION":"15.15.5"},{"ID":1872,"PRODUCT_NAME":"Zoom","VENDOR":"Zoom Video Communications, Inc.","VERSION":"5.4.9"}],"PublicFileSharing":[{"Status":0}],"Recording_Web_Meeting":[],"Remote_Control":[{"ID":1872,"PRODUCT_NAME":"Zoom","Status":1,"VENDOR":"Zoom Video Communications, Inc.","VERSION":"5.4.9"},{"AR_ID":"815","ID":815,"PRODUCT_NAME":"PuTTY","Status":1,"VENDOR":"PuTTY","VERSION":"0.74"},{"ID":3059,"PRODUCT_NAME":"Remote Desktop Connection","Status":1,"VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":3090,"PRODUCT_NAME":"GoToMeeting","Status":1,"VENDOR":"LogMeIn, Inc.","VERSION":"10.16.1.19709"},{"ID":3346,"PRODUCT_NAME":"TeamViewer","Status":1,"VENDOR":"TeamViewer GmbH","VERSION":"15.15.5"},{"ID":3124,"PRODUCT_NAME":"VMware Horizon Client","Status":1,"VENDOR":"VMware, Inc.","VERSION":"8.2.0.18176"}],"Toolbars":[],"Unclassified":[{"AR_ID":"108","ID":108,"PRODUCT_NAME":"WinRAR (x64)","VENDOR":"Alexander Roshal","VERSION":"5.91.0"},{"ID":1152,"PRODUCT_NAME":"Microsoft PowerPoint","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":2819,"PRODUCT_NAME":"Adobe Acrobat Reader DC Continuous","VENDOR":"Adobe Systems Inc.","VERSION":"21.001.20155"},{"ID":1151,"PRODUCT_NAME":"Microsoft Publisher","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":1214,"PRODUCT_NAME":"Microsoft Excel","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":3102,"PRODUCT_NAME":"Teams Machine-Wide Installer","VENDOR":"Microsoft Corporation","VERSION":"1.4.0.7174"},{"ID":1153,"PRODUCT_NAME":"Microsoft Outlook","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":1154,"PRODUCT_NAME":"Microsoft OneNote","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":1527,"PRODUCT_NAME":"Total Commander (x64)","VENDOR":"Ghisler Software GmbH","VERSION":"9.51"},{"ID":1634,"PRODUCT_NAME":"Windows Media Player","VENDOR":"Microsoft Corporation","VERSION":"12.0.19041.1"},{"ID":1225,"PRODUCT_NAME":"Microsoft Word","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"AR_ID":"303","ID":303,"PRODUCT_NAME":"Notepad++ (x86)","VENDOR":"Notepad++ Team","VERSION":"7.9.1"},{"AR_ID":"200","ID":200,"PRODUCT_NAME":"7-Zip (x64)","VENDOR":"Igor Pavlov","VERSION":"19.00"},{"AR_ID":"211","ID":211,"PRODUCT_NAME":"Wireshark (x64)","VENDOR":"The Wireshark developer community","VERSION":"3.4.5"},{"ID":3306,"PRODUCT_NAME":"DirectX","VENDOR":"Microsoft Corporation","VERSION":"12"},{"ID":2807,"PRODUCT_NAME":"Notepad","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":2815,"PRODUCT_NAME":"Paint","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":2925,"PRODUCT_NAME":"WordPad","VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"},{"ID":3029,"PRODUCT_NAME":"Microsoft Office 365","VENDOR":"Microsoft Corporation","VERSION":"16.0.13929.20386"},{"ID":3000,"PRODUCT_NAME":"OPSWAT Client","VENDOR":"OPSWAT, Inc.","VERSION":"7.6.455.0"},{"ID":3109,"PRODUCT_NAME":"Microsoft .NET Framework 4","VENDOR":"Microsoft Corporation","VERSION":"4.8.4084.0"},{"ID":3123,"PRODUCT_NAME":"Microsoft XML Parser 3","VENDOR":"Microsoft Corporation","VERSION":"8.110.19041.844"},{"ID":3202,"PRODUCT_NAME":"Microsoft Visual Studio Code (User)","VENDOR":"Microsoft Corporation","VERSION":"1.51.0"},{"ID":3259,"PRODUCT_NAME":"Microsoft Visual C++ 2015-2019 Redistributable (x64)","VENDOR":"Microsoft Corporation","VERSION":"14.28.29910.0"},{"ID":3205,"PRODUCT_NAME":"Microsoft XML Parser 6","VENDOR":"Microsoft Corporation","VERSION":"6.30.19041.906"},{"ID":3228,"PRODUCT_NAME":"Python 2.7 64-bit","VENDOR":"Python Software Foundation","VERSION":"2.7.17"},{"ID":3258,"PRODUCT_NAME":"Microsoft Visual C++ 2015-2019 Redistributable (x86)","VENDOR":"Microsoft Corporation","VERSION":"14.27.29016.0"},{"ID":3340,"PRODUCT_NAME":"Node.js Current","VENDOR":"Joyent, Inc.","VERSION":"15.5.1"}],"Unclassified_PUA":[],"Uninstaller":[],"VPN_Client":[{"ID":1119,"PRODUCT_NAME":"Windows VPN Client","Status":1,"VENDOR":"Microsoft Corporation","VERSION":"10.0.19041.1"}],"Virtual_Machine":[]}
-)_json",
-                             serr);
-
-  auto eval = [](EvaluablePtr evaluable, Json doc,
-                 JEvalContext::EvalHistoryPtr his = nullptr) {
-    auto context = make_shared<JEvalContext>(nullptr, doc);
-    context->setEvalHistory(his);
-    cout << "-------------------\n";
-    cout << "Evaluated value ="
-         << SyntaxEvaluator{}.evaluate(evaluable, context) << endl;
-    return context->evalHistory();
+    for (auto& item : sequence) {
+      ++i;
+      __clogger << setiosflags(ios::left) << setw(maxLen + 2)
+                << strJoin(prefix, item);
+      if (i % 4 == 0) {
+        __clogger << "\n";
+      }
+    }
   };
 
-  try {
-    auto evaluable = parser::parse(jrules);
-    SyntaxValidator validator;
-    validator.validate(evaluable);
-    cout << validator.get_report() << endl;
-    JEvalContext::EvalHistoryPtr his;
-    his = eval(evaluable, joldDoc);
-    //    his = eval(evaluable, jnewDoc, his);
-    //    his = eval(evaluable, jnewDoc, his);
-    //    his = eval(evaluable, joldDoc, his);
-    //    his = eval(evaluable, joldDoc, his);
-    //    his = eval(evaluable, joldDoc, his);
-    //    his = eval(evaluable, joldDoc, his);
-    //    his = eval(evaluable, joldDoc, his);
-    //    his = eval(evaluable, joldDoc, his);
-  } catch (const ExceptionBase& e) {
-    cout << "\nGot exception: " << e.what() << endl;
+  if (!functions.empty()) {
+    clogger() << "\nFunction keyword list:";
+    displaySequence(functions, prefix::specifier);
   }
+
+  auto& evbSpecifiers = parser::evaluableSpecifiers();
+  if (!evbSpecifiers.empty()) {
+    clogger() << "\nEvaluable keyword list:";
+    displaySequence(evbSpecifiers, "");
+  }
+
+  exit(0);
+}
+
+void checkInfoQueryInfoOption(const String& argv1) {
+  if (argv1 == JASSTR("--keywords")) {
+    showSupportedKeywords();
+  } else if (argv1 == JASSTR("--help")) {
+    showHelp(0);
+  } else if (argv1 == JASSTR("--version")) {
+    clogger() << jas::version;
+    exit(0);
+  } else if (argv1.size() > 2 && argv1.find(JASSTR("--")) != String::npos) {
+    clogger() << "Unknown option: " << argv1;
+    showHelp();
+  }
+}
+using Ifstream = basic_ifstream<CharType>;
+using Ofstream = basic_ofstream<CharType>;
+
+#ifdef AXZ
+int wmain
+#else
+int main
+#endif
+    (int argc, CharType** argv) {
+  if (argc < 2) {
+    showHelp();
+  }
+
+  checkInfoQueryInfoOption(argv[1]);
+  // Parsing section...........
+
+  __CloggerSection showTitleSct{JASE_TITLE};
+  std::error_code ec;
+  auto jasFile = fs::path{argv[1]};
+  exitIf(!fs::exists(jasFile, ec), "Input file doens't exist!");
+
+  Ifstream ifs(jasFile);
+  exitIf(!ifs.is_open(), "Cannot open file ", jasFile);
+  String strExpression, strCurrentInput, strLastInput;
+
+  exitIf(!getline(ifs, strExpression), "Failed to read jas expression");
+  auto jexpression = JsonTrait::parse(strExpression);
+  if (getline(ifs, strCurrentInput)) {
+    if (!getline(ifs, strLastInput)) {
+      clogger() << "No last input data";
+    }
+  } else {
+    clogger() << "No input data";
+  }
+
+  auto jcurrentInput = JsonTrait::parse(strCurrentInput);
+  auto jLastInput = JsonTrait::parse(strLastInput);
+
+//  try {
+    auto historicalContext =
+        make_shared<HistoricalEvalContext>(nullptr, jcurrentInput, jLastInput);
+    auto evaluable = parser::parse(historicalContext, jexpression);
+
+    clogger() << "JAS reconstructed: "
+              << parser::reconstructJAS(historicalContext, jexpression);
+    SyntaxEvaluator evaluator;
+
+    SyntaxValidator validator;
+    if (!validator.validate(evaluable)) {
+      __CloggerSection syntaxErrorSct(JASSTR("Syntax Error"));
+      clogger() << validator.getReport();
+      exit(-1);
+    } else {
+      {
+        validator.clear();
+        __CloggerSection transformSyntaxSct(JASSTR("Transformed syntax"));
+        clogger() << validator.generateSyntax(evaluable);
+      }
+
+      auto lastEvalResultFile = jasFile;
+      lastEvalResultFile.replace_extension(".his");
+
+      HistoricalEvalContext::EvaluationResultPtr lastEvalResult;
+      if (fs::exists(lastEvalResultFile, ec)) {
+        clogger() << "Load evaluation result from " << lastEvalResultFile;
+        Ifstream lerifs{lastEvalResultFile};
+        historicalContext->loadEvaluationResult(lerifs);
+      }
+
+      auto evalStart = system_clock::now();
+      auto evaluated = evaluator.evaluate(evaluable, historicalContext);
+      auto evalTime = chrono::duration_cast<chrono::microseconds>(
+                          system_clock::now() - evalStart)
+                          .count();
+
+      {
+        __CloggerSection evalResultSct(JASSTR("Evaluation result"));
+        clogger() << evaluated;
+        clogger() << "\nExc-time: (" << evalTime << ")ms!";
+      }
+
+      Ofstream ofs{lastEvalResultFile};
+      if (historicalContext->saveEvaluationResult(ofs)) {
+        clogger() << "Result saved to " << lastEvalResultFile;
+      }
+    }
+
+//  } catch (const Exception& e) {
+//    clogger() << "ERROR: " << e.what();
+//    exit(-1);
+//  }
+
   return 0;
 }

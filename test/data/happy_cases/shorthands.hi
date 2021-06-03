@@ -1,0 +1,3 @@
+"@to_string:@field:int"
+{"object":{"array":["one",2,"three"]},"int":123}
+"123"

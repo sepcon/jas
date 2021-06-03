@@ -3,6 +3,7 @@
 #include <memory>
 
 #include "String.h"
+#include "Json.h"
 
 namespace jas {
 

@@ -1,152 +1,104 @@
 #pragma once
 
-#include <json11.hpp>
+#include "Exception.h"
 
-namespace jas {
-
-struct JsonTrait {
-  using Json = json11::Json;
-  using Object = Json::object;
-  using Array = Json::array;
-  using String = std::string;
-  template <typename T, typename = void>
-  struct _Impl;
-
-  static Json parse(const String& s) {
-    String err;
-    return Json::parse(s, err);
-  }
-
-  template <class T>
-  static Json makeJson(T&& v) {
-    return _Impl<std::decay_t<std::remove_reference_t<T>>>::makeJson(
-        std::forward<T>(v));
-  }
-
-  template <class T>
-  static constexpr bool isJsonConstructible() {
-    using Tp = std::remove_const_t<std::remove_reference_t<T>>;
-    return std::is_integral_v<Tp> || std::is_floating_point_v<Tp> ||
-           std::is_constructible_v<String, T> ||
-           std::is_constructible_v<Object, T> ||
-           std::is_constructible_v<Array, T>;
-  }
-
-  static bool isNull(const Json& j) { return j.is_null(); }
-  static bool isDouble(const Json& j) { return j.is_number(); }
-  static bool isInt(const Json& j) { return j.is_number(); }
-  static bool isBool(const Json& j) { return j.is_bool(); }
-  static bool isString(const Json& j) { return j.is_string(); }
-  static bool isArray(const Json& j) { return j.is_array(); }
-  static bool isObject(const Json& j) { return j.is_object(); }
-  template <typename T>
-  static bool isType(const Json& j) {
-    return _Impl<T>::matchType(j);
-  }
-
-  static bool hasKey(const Json& j, const String& key) {
-    return !j[key].is_null();
-  }
-  static bool hasKey(const Object& j, const String& key) {
-    auto it = j.find(key);
-    return it != j.end();
-  }
-
-  static bool equal(const Json& j1, const Json& j2) { return j1 == j2; }
-
-  static bool empty(const Json& j) { return j.is_null(); }
-
-  static size_t size(const Json& j) {
-    if (j.is_object()) {
-      return j.object_items().size();
-    } else if (j.is_array()) {
-      return j.array_items().size();
-    } else {
-      return 0;
-    }
-  }
-
-  static size_t size(const Array& arr) { return arr.size(); }
-
-  static size_t size(const Object& o) { return o.size(); }
-
-  static Json get(const Json& j, const String& key) { return j[key]; }
-  static Json get(const Object& j, const String& key) {
-    if (auto it = j.find(key); it != j.end()) {
-      return it->second;
-    } else {
-      return Json{};
-    }
-  }
-
-  static void add(Object& obj, String key, Json value) {
-    obj.emplace(std::move(key), std::move(value));
-  }
-
-  static void add(Array& arr, Json value) { arr.push_back(std::move(value)); }
-
-  template <class T>
-  static decltype(auto) get(const Json& j) {
-    return _Impl<T>::get(j);
-  }
-
-  template <class T>
-  static decltype(auto) get(const Json& j, const String& key) {
-    return _Impl<T>::get(get(j, key));
-  }
-  template <class _base_type, class _param_type>
-  using _allow_if_constructible_t = std::enable_if_t<
-      std::is_constructible_v<
-          _base_type, std::remove_cv_t<std::remove_reference_t<_param_type>>>,
-      void>;
-
-  template <>
-  struct _Impl<bool> {
-    static bool matchType(const Json& j) { return j.is_bool(); }
-    static bool get(const Json& j) { return j.bool_value(); }
-    static Json makeJson(bool v) { return Json(v); }
-  };
-
-  template <typename T>
-  struct _Impl<T, std::enable_if_t<std::is_integral_v<T>, void>> {
-    static bool matchType(const Json& j) { return j.is_number(); }
-    static T get(const Json& j) { return static_cast<T>(j.int_value()); }
-    static Json makeJson(T v) { return static_cast<int>(v); }
-  };
-
-  template <typename T>
-  struct _Impl<T, std::enable_if_t<std::is_floating_point_v<T>, void>> {
-    static bool matchType(const Json& j) { return j.is_number(); }
-    static double get(const Json& j) { return j.number_value(); }
-    static Json makeJson(T v) { return static_cast<double>(v); }
-  };
-
-  template <class _string>
-  struct _Impl<_string, _allow_if_constructible_t<String, _string>> {
-    static bool matchType(const Json& j) { return j.is_string(); }
-    static const String& get(const Json& j) { return j.string_value(); }
-    static Json makeJson(_string v) { return Json(std::move(v)); }
-  };
-
-  template <>
-  struct _Impl<Array> {
-    static bool matchType(const Json& j) { return j.is_array(); }
-    static const Array& get(const Json& j) { return j.array_items(); }
-    static Json makeJson(Array v) { return Json(std::move(v)); }
-  };
-
-  template <>
-  struct _Impl<Object> {
-    static bool matchType(const Json& j) { return j.is_object(); }
-    static const Object& get(const Json& j) { return j.object_items(); }
-    static Json makeJson(Object v) { return Json(std::move(v)); }
-  };
-
-  static String dump(const Json& j) { return j.dump(); }
-};
-
-}  // namespace jas
+#ifdef AXZ
+#include "json_trait/axzdict/JsonTrait.h"
+#elif USE_NLOHMANN_JSON
+#include "json_trait/nlohmann/JsonTrait.h"
+#else
+#include "json_trait/json11/JsonTrait.h"
+#endif
 
 namespace jas {
 using Json = JsonTrait::Json;
+using JsonArray = JsonTrait::Array;
+using JsonObject = JsonTrait::Object;
+using JsonString = JsonTrait::String;
+using JsonPath = JsonTrait::Path;
+
+struct JsonAdapter {
+  template <class T,
+            std::enable_if_t<JsonTrait::isJsonConstructible<T>(), bool> = true>
+  JsonAdapter(T&& v) : value(JsonTrait::makeJson(std::forward<T>(v))) {}
+  JsonAdapter(Json v) : value(std::move(v)) {}
+  JsonAdapter() = default;
+  JsonAdapter(const JsonAdapter&) = default;
+  JsonAdapter(JsonAdapter&&) noexcept = default;
+  JsonAdapter& operator=(const JsonAdapter&) = default;
+  JsonAdapter& operator=(JsonAdapter&&) = default;
+
+  __mc_jas_exception(TypeError);
+  template <class T>
+  bool isType() const {
+    if constexpr (std::is_same_v<
+                      Json, std::remove_const_t<std::remove_reference_t<T>>>) {
+      return true;
+    } else {
+      return JsonTrait::isType<T>(value);
+    }
+  }
+  template <class T>
+  T get() const {
+    makeSureConvertible<T>();
+    if constexpr (std::is_same_v<T, Json>) {
+      return value;
+    } else {
+      return JsonTrait::get<T>(value);
+    }
+  }
+
+  template <class T>
+  T getOr(T&& v) const {
+    try {
+      return get<T>();
+    } catch (const TypeError&) {
+      return v;
+    }
+  }
+
+  template <class T>
+  operator T() const {
+    return get<T>();
+  }
+
+  template <class T>
+  bool convertible() const {
+    return isType<T>();
+  }
+
+  template <class T>
+  void makeSureConvertible() const {
+    throwIf<TypeError>(!convertible<T>(), "Convert from `",
+                       JsonTrait::dump(value), "` to ", typeid(T).name());
+  }
+
+  operator const Json&() const { return value; }
+
+  template <typename _callable>
+  auto visitValue(_callable&& apply, bool throwWhenNull = false) const {
+    if (isType<bool>()) {
+      return apply(get<bool>());
+    } else if (isType<int>()) {
+      return apply(get<int>());
+    } else if (isType<double>()) {
+      return apply(get<double>());
+    } else if (isType<String>()) {
+      return apply(get<String>());
+    } else if (isType<JsonArray>()) {
+      return apply(get<JsonArray>());
+    } else if (isType<JsonObject>()) {
+      return apply(get<JsonObject>());
+    }
+
+    throwIf<TypeError>(throwWhenNull, "vitsit null");
+    return apply(value);
+  }
+
+  bool isNull() const { return JsonTrait::isNull(value); }
+  String dump() const { return JsonTrait::dump(value); }
+
+  Json value;
+};
+
 }  // namespace jas
