@@ -39,6 +39,7 @@ inline const auto paste = JASSTR("@paste");
 inline const auto cond = JASSTR("@cond");
 inline const auto op = JASSTR("@op");
 inline const auto list = JASSTR("@list");
+inline const auto noeval = JASSTR("@noeval");
 inline const auto id = JASSTR("$");
 
 }  // namespace keyword

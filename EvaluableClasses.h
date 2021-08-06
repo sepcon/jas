@@ -297,7 +297,7 @@ struct Variable : public __BeEvaluable<Variable> {
   using _Base::_Base;
 };
 
-inline auto makeDV(int val) {
+inline auto makeDV(int32_t val) {
   return std::make_shared<DirectVal>(static_cast<int64_t>(val));
 }
 inline auto makeDV(int64_t val) { return std::make_shared<DirectVal>(val); }
@@ -311,18 +311,6 @@ inline auto makeDV(String val) {
 inline auto makeDV(bool val) { return std::make_shared<DirectVal>(val); }
 inline auto makeDV(Json val) {
   return std::make_shared<DirectVal>(std::move(val));
-}
-inline auto makeDV(nullptr_t val) { return std::make_shared<DirectVal>(val); }
-
-inline auto operator"" _dv(uint64_t v) {
-  return std::make_shared<DirectVal>(static_cast<int64_t>(v));
-}
-
-inline auto operator"" _dv(long double v) {
-  return std::make_shared<DirectVal>(static_cast<double>(v));
-}
-inline auto operator"" _dv(const CharType* v, size_t s) {
-  return std::make_shared<DirectVal>(String(v, s));
 }
 inline auto makeOp(String id, ArithmeticOperatorType op, Evaluables params,
                    ContextParams cp = {}) {

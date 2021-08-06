@@ -32,3 +32,5 @@ true
 true
 {"@or":[false,false]}
 false
+{"@not": true}
+false

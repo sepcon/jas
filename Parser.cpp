@@ -46,7 +46,6 @@ static Json jsonGet(const Json& j, const String& key);
 static Json jsonGet(const Json& j, const String& key);
 static Json makeJson(const String& key, Json value);
 static std::vector<String> split(String str, const String& delim);
-
 struct ParserImpl {
   using ParsingRuleCallback = EvaluablePtr (ParserImpl::*)(const Json&);
   using KeywordParserMap = std::map<String, ParsingRuleCallback>;
@@ -54,6 +53,7 @@ struct ParserImpl {
 
   ContextPtr context_;
   std::vector<ParsingRuleCallback> parseCallbacks_ = {
+      &ParserImpl::parseNoEval,              //
       &ParserImpl::parseOperations,          //
       &ParserImpl::parseVariableFieldQuery,  //
       &ParserImpl::parseVariable,            //
@@ -96,6 +96,10 @@ struct ParserImpl {
     };
     return specifiers;
   }
+
+  static bool isVariableLike(const String& str) {
+    return !str.empty() && str[0] == prefix::variable;
+  }
   static bool isSpecifierLike(const String& str) {
     return !str.empty() && str[0] == prefix::specifier;
   }
@@ -109,20 +113,29 @@ struct ParserImpl {
         keyword::cond,
         keyword::op,
         keyword::list,
+        keyword::noeval,
     };
     return specifiers.find(kw) != specifiers.end();
   }
+
   bool isSpecifier(const String& str) const {
     return !str.empty() &&
            (isEvaluableSpecifier(str) || isNonOpSpecifier(str) ||
-            context_->functionSupported(str.substr(1)));
+            functionSupported(str.substr(1)));
   }
-  void makeSureNotUnsupportedSpecifier(const String& str) {
-    throwIf<SyntaxError>(
-        isSpecifierLike(str) && !isSpecifier(str),
-        JASSTR("Following character `"), prefix::specifier,
-        JASSTR("` must be a specifier or supported function: ??"), str,
-        JASSTR("??"));
+
+  bool functionSupported(const String& funcName) const {
+    return cif::supported(funcName) || context_->functionSupported(funcName);
+  }
+
+  void checkSupportedSpecifier(const String& str) {
+    if (!isVariableLike(str)) {
+      throwIf<SyntaxError>(
+          isSpecifierLike(str) && !isSpecifier(str),
+          JASSTR("Following character `"), prefix::specifier,
+          JASSTR("` must be a specifier or supported function: ??"), str,
+          JASSTR("??"));
+    }
   }
 
   static std::optional<EvaluableInfo> extractOperationInfo(const Json& j) {
@@ -141,7 +154,7 @@ struct ParserImpl {
   static ContextParams extractContextParams(ParserImpl* parser, const Json& j) {
     ContextParams ctxtParams;
     for (auto& [key, val] : jsonGet<JsonObject>(j)) {
-      if (!key.empty() && key[0] == prefix::variable) {
+      if (key.size() > 1 && key[0] == prefix::variable) {
         ctxtParams.emplace(key.substr(1), parser->parseImpl(val));
       }
     }
@@ -171,14 +184,16 @@ struct ParserImpl {
         auto& [sop, jevaluation, id] = evbInfo.value();
         if (auto op = _Base::mapToEvbType(sop);
             op != _operation_type::invalid) {
+          Evaluables params;
           if (JsonTrait::isArray(jevaluation)) {
-            Evaluables params;
             for (auto& jparam : jsonGet<JsonArray>(jevaluation)) {
               params.emplace_back(parser->parseImpl(jparam));
             }
-            return makeOp(std::move(id), op, std::move(params),
-                          extractContextParams(parser, expression));
+          } else {
+            params.emplace_back(parser->parseImpl(jevaluation));
           }
+          return makeOp(std::move(id), op, std::move(params),
+                        extractContextParams(parser, expression));
         }
       }
       return {};
@@ -289,8 +304,9 @@ struct ParserImpl {
             list = parser->parseImpl(jlistExpr);
           }
 
+          auto ctxtParams = extractContextParams(parser, expression);
           output = makeOp(id, op, std::move(evbCond), std::move(list),
-                          extractContextParams(parser, expression));
+                          ctxtParams);
           break;
         }
 
@@ -316,7 +332,7 @@ struct ParserImpl {
           break;
         }
 
-        makeSureNotUnsupportedSpecifier(str);
+        checkSupportedSpecifier(str);
 
         // Formatting String to number type:
         // "100(%d)", "100(%f), "100(%s)"
@@ -342,7 +358,7 @@ struct ParserImpl {
             case JASSTR('f'):
               return makeDV(std::stod(realVal));
             case JASSTR('l'):
-              return makeDV(std::stoll(realVal));
+              return makeDV(static_cast<int64_t>(std::stoll(realVal)));
             case JASSTR('s'):
               return makeDV(std::move(realVal));
             default:
@@ -365,9 +381,9 @@ struct ParserImpl {
       if (evbInfo) {
         auto& [sop, jevaluable, id] = evbInfo.value();
         if (isSpecifierLike(sop)) {
-          auto funcName = String{sop}.substr(1);
-          if (parser->context_->functionSupported(funcName)) {
-            return makeFnc(std::move(id), String{funcName},
+          auto funcName = sop.substr(1);
+          if (parser->functionSupported(funcName)) {
+            return makeFnc(std::move(id), move(funcName),
                            parser->parseImpl(jevaluable),
                            extractContextParams(parser, expr));
           }
@@ -375,15 +391,25 @@ struct ParserImpl {
       } else if (JsonTrait::isString(expr)) {
         auto str = JsonTrait::get<String>(expr);
         if (!str.empty()) {
-          auto funcName = String{str}.substr(1);
-          if (parser->context_->functionSupported(funcName)) {
-            return makeFnc({}, String{funcName}, {});
+          auto funcName = str.substr(1);
+          if (parser->functionSupported(funcName)) {
+            return makeFnc({}, move(funcName), {});
           }
         }
       }
       return {};
     }
   };
+
+  EvaluablePtr parseNoEval(const Json& expr) {
+    if (JsonTrait::isObject(expr) && JsonTrait::hasKey(expr, keyword::noeval)) {
+      throwIf<SyntaxError>(JsonTrait::size(expr) > 1,
+                           "Json object must contain only ", "keyword `",
+                           keyword::noeval, "` and not evaluated expression");
+      return makeDV(jsonGet(expr, keyword::noeval));
+    }
+    return {};
+  }
 
   template <class _OperationParser>
   EvaluablePtr _parseOperation(const Json& expr,
@@ -392,14 +418,17 @@ struct ParserImpl {
   }
 
   EvaluablePtr parseOperations(const Json& expr) {
+    using OperationParserCallback = EvaluablePtr (ParserImpl::*)(
+        const Json& expr, const OptionalEvbInfo& evbInfo);
     auto evbInfo = extractOperationInfo(expr);
-    for (auto& parseFunc : {
-             &ParserImpl::_parseOperation<ArithmeticalOpParser>,
-             &ParserImpl::_parseOperation<LogicalOpParser>,
-             &ParserImpl::_parseOperation<ComparisonOpParser>,
-             &ParserImpl::_parseOperation<ListOpParser>,
-             &ParserImpl::_parseOperation<FunctionParser>,
-         }) {
+    static std::initializer_list<OperationParserCallback> operationParsers = {
+        &ParserImpl::_parseOperation<ArithmeticalOpParser>,
+        &ParserImpl::_parseOperation<LogicalOpParser>,
+        &ParserImpl::_parseOperation<ComparisonOpParser>,
+        &ParserImpl::_parseOperation<ListOpParser>,
+        &ParserImpl::_parseOperation<FunctionParser>,
+    };
+    for (auto parseFunc : operationParsers) {
       if (auto evb = (this->*parseFunc)(expr, evbInfo)) {
         return evb;
       }
@@ -466,8 +495,8 @@ struct ParserImpl {
   Json reconstructJAS(const Json& j) {
     if (JsonTrait::isArray(j)) {
       JsonArray arr;
-      for (auto& ji : jsonGet<JsonArray>(j)) {
-        JsonTrait::add(arr, reconstructJAS(ji));
+      for (auto& val : jsonGet<JsonArray>(j)) {
+        JsonTrait::add(arr, reconstructJAS(val));
       }
       return JsonTrait::makeJson(std::move(arr));
     } else if (JsonTrait::isObject(j)) {
@@ -494,7 +523,7 @@ struct ParserImpl {
     }
 
     if (isSpecifier(expression)) {
-      return JsonTrait::makeJson(String{expression});
+      return JsonTrait::makeJson(expression);
     }
 
     auto increaseTillNotSpace = [](const String& s, size_t& currentPos,
@@ -525,7 +554,9 @@ struct ParserImpl {
     size_t e = expression.size() - 1;
     increaseTillNotSpace(expression, b);
     increaseTillNotSpace(expression, e, -1);
-    if (b <= e) {
+    if ((e - b) == expression.size()) {
+      return JsonTrait::makeJson(expression);
+    } else if (b <= e) {
       return JsonTrait::makeJson(expression.substr(b, e + 1));
     } else {
       return {};
@@ -552,28 +583,30 @@ struct ParserImpl {
   }
 
   Json constructJAS(const String& expression, const Json& jevaluable) {
-    if (isSpecifier(expression)) {
+    if (expression == keyword::noeval) {
+      return JsonTrait::makeJson(JsonObject{{expression, jevaluable}});
+    } else if (isSpecifier(expression)) {
       return makeJson(expression, jevaluable);
     } else {
       auto tokens = split(expression, JASSTR(":"));
       if (!tokens.empty()) {
         auto isPipeline = true;
         for (auto it = tokens.begin() + 1; it != tokens.end(); ++it) {
-          makeSureNotUnsupportedSpecifier(*it);
-          if (!isSpecifierLike(*it)) {
+          checkSupportedSpecifier(*it);
+          if (!isSpecifierLike(*it) && !isVariableLike(*it)) {
             isPipeline = false;
             break;
           }
         }
 
         if (isPipeline) {
-          makeSureNotUnsupportedSpecifier(tokens.front());
+          checkSupportedSpecifier(tokens.front());
           return makeJAS(tokens.begin(), tokens.end(), jevaluable);
         }
       }
     }
 
-    makeSureNotUnsupportedSpecifier(expression);
+    checkSupportedSpecifier(expression);
     return makeJson(expression, jevaluable);
   }
 

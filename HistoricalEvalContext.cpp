@@ -1,5 +1,6 @@
 #include "HistoricalEvalContext.h"
 
+#include <algorithm>
 #include <cassert>
 #include <memory>
 
@@ -159,7 +160,7 @@ JsonAdapter HistoricalEvalContext::evchg(const Json& json) {
     auto& levr = *lastEvalResult();
     if (auto lastIt = levr.find(strJoin(contextPath(), cstr::path_sep, propID));
         lastIt != std::end(levr)) {
-      changed = !JsonTrait::equal(lastIt->second, itProp->second);
+      changed = !JsonTrait::equal(lastIt->second, *itProp->second);
     }
   } else if (parent_) {
     changed = parent()->evchg(propID);
@@ -255,7 +256,7 @@ JsonAdapter HistoricalEvalContext::hfield(const Json& params) {
     for (auto& newItem : newList) {
       JsonTrait::add(
           output,
-          _makeHistoryData(move(newItem),
+          _makeHistoryData(newItem,
                            findItem(oldList, JsonTrait::get(newItem, iid))));
     }
     return output;
@@ -302,7 +303,9 @@ void HistoricalEvalContext::syncEvalResult() {
   auto& evr = *lastEvalResult();
   auto thisCtxtPath = contextPath();
   for (auto& [prop, val] : properties_) {
-    evr[strJoin(thisCtxtPath, cstr::path_sep, prop)] = val;
+    if (val) {
+      evr[strJoin(thisCtxtPath, cstr::path_sep, prop)] = val->value;
+    }
   }
 }
 
@@ -330,7 +333,7 @@ bool HistoricalEvalContext::loadEvaluationResult(IStream& istrm) {
 }
 
 std::vector<String> HistoricalEvalContext::supportedFunctions() const {
-  auto funcs = _Base::supportedFunctions();
+  std::vector<String> funcs;
   std::transform(begin(funcsmap_), std::end(funcsmap_),
                  std::back_insert_iterator(funcs),
                  [](auto&& p) { return p.first; });

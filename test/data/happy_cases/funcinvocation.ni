@@ -4,10 +4,10 @@
 "HELLOWORLD"
 {"@gt": ["@current_time", 1621417144] }
 true
-"@unix_timestamp:21/06/04 02:43:20"
+"@unix_timestamp:2021/06/04 02:43:20"
 1622749400
-"@unix_timestamp:"
--1
+{"@lt":["@unix_timestamp", 0]}
+{"@exception": "EvaluationError"}
 {"@contains":["Hello", "ell"]}
 true
 {"@contains":["Hello", "bell"]}

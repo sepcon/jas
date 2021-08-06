@@ -193,8 +193,20 @@ class SyntaxValidatorImpl : public EvaluatorBase {
     os_ << JASSTR(")");
   }
 
-  void eval(const VariableFieldQuery&)  {
-
+  void eval(const VariableFieldQuery& vfq) override {
+    os_ << vfq.id << "[";
+    if (!vfq.field_path.empty()) {
+      auto it = std::begin(vfq.field_path);
+      (*it)->accept(this);
+      while (++it != std::end(vfq.field_path)) {
+        os_ << '/';
+        (*it)->accept(this);
+      }
+    } else {
+      os_ << bookMarkError(
+          strJoin("No key or path for accessing variable `", vfq.id, "`"));
+    }
+    os_ << "]";
   }
 
   void eval(const Variable& rv) override {

@@ -1,0 +1,21 @@
+set(JAS_PRECOMPILE_HEADERS
+    <algorithm>
+    <ctime>
+    <functional>
+    <iomanip>
+    <list>
+    <map>
+    <regex>
+    <set>
+    <sstream>
+    <string>
+    <string_view>
+    <unordered_map>
+    <unordered_set>
+    <vector>
+    <memory>
+    <algorithm>
+    "Json.h"
+    "String.h"
+    "Exception.h"
+    )

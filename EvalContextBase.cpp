@@ -6,6 +6,7 @@
 
 namespace jas {
 
+using std::make_shared;
 using std::move;
 
 static bool _isGloblProperty(const String &name);
@@ -13,16 +14,11 @@ static bool _isGloblProperty(const String &name);
 EvalContextBase::EvalContextBase(EvalContextBase *parent, String id)
     : parent_(parent), id_(move(id)) {}
 
-std::vector<String> EvalContextBase::supportedFunctions() const {
-  return cif::supportedFunctions();
-}
-
 bool EvalContextBase::functionSupported(const String &functionName) const {
   if (parent_) {
     return parent_->functionSupported(functionName);
-  } else {
-    return cif::supported(functionName);
   }
+  return false;
 }
 
 JsonAdapter EvalContextBase::invoke(const String &funcName,
@@ -33,19 +29,20 @@ JsonAdapter EvalContextBase::invoke(const String &funcName,
     } catch (const FunctionNotFoundError &) {
     }
   }
-  return cif::invoke(funcName, param);
+  throw_<FunctionNotFoundError>();
+  return {};
 }
 
-JsonAdapter EvalContextBase::property(const String &name) const {
-  JsonAdapter prop;
+JAdapterPtr EvalContextBase::property(const String &name) const {
+  JAdapterPtr prop;
   do {
     if (_isGloblProperty(name)) {
       auto root = rootContext();
       if (root == this) {
-        if (auto it = properties_.find(name.c_str() + 1);
-            it != properties_.end()) {
-          prop = it->second;
-        }
+        auto it = properties_.find(name.c_str() + 1);
+        throwIf<EvaluationError>(!(it != properties_.end()),
+                                 "Property not found: ", name);
+        prop = it->second;
         break;
       }
       prop = root->property(name.substr(1));
@@ -56,25 +53,42 @@ JsonAdapter EvalContextBase::property(const String &name) const {
       prop = it->second;
     } else if (parent_) {
       prop = parent_->property(name);
+    } else {
+      throw_<EvaluationError>("Property not found: ", name);
     }
   } while (false);
   return prop;
 }
 
-void EvalContextBase::setProperty(const String &name, JsonAdapter val) {
+void EvalContextBase::setProperty(const String &name, JAdapterPtr val) {
   if (_isGloblProperty(name)) {
     // This case for global property
     if (auto root = rootContext(); root == this) {
-      properties_[name.substr(1)] = move(val.value);
+      properties_[name.substr(1)] = move(val);
     } else {
       root->setProperty(name.substr(1), move(val));
     }
   } else {
-    properties_[name] = move(val.value);
+    properties_[name] = move(val);
   }
 }
 
-String EvalContextBase::debugInfo() const { return id_; }
+String EvalContextBase::debugInfo() const {
+  auto inf = id_;
+  OStringStream oss;
+  oss << id_ << "({";
+  for (auto &[prop, val] : properties_) {
+    oss << "{" << prop << ", ";
+    if (val) {
+      oss << val->dump();
+    } else {
+      oss << "null";
+    }
+    oss << " }, ";
+  }
+  oss << "})";
+  return oss.str();
+}
 
 const EvalContextBase *EvalContextBase::rootContext() const {
   auto root = this;

@@ -5,10 +5,6 @@ project(jas LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-include_directories(D:/SourceCode/GitHub/json11)
-
-set(JAS_BINARIES_OUTPUT_DIR GLOBAL ${CMAKE_CURRENT_BINARY_DIR})
-
 add_library(jas
     Version.h
     String.h
@@ -34,24 +30,39 @@ add_library(jas
     CIF.cpp
     )
 
-
 add_executable(jase main.cpp)
 add_executable(jas_test test.cpp)
 
+include(pch.cmake)
+target_precompile_headers(jas PRIVATE ${JAS_PRECOMPILE_HEADERS})
+target_precompile_headers(jas_test REUSE_FROM jas)
+target_precompile_headers(jase REUSE_FROM jas)
+
 set(JAS_ALL_NEEDED_LIBS jas)
-if(USE_AXZ_DICT)
-    add_definitions(
-        -DAXZ
-        -DJAS_USE_WSTR)
-    add_subdirectory(json_trait/axzdict)
-    set(JAS_ALL_NEEDED_LIBS ${JAS_ALL_NEEDED_LIBS} axzdct)
-elseif(USE_NLOHMANN_JSON)
-    message("USE NLOHMAN")
-    add_definitions(-DUSE_NLOHMANN_JSON)
+
+if(NOT JAS_JSON_TYPE)
+  message("USE NLOHMAN")
+  add_definitions(-DUSE_NLOHMANN_JSON)
+elseif("${JAS_JSON_TYPE}" STREQUAL "AXZ_JSON")
+  message("USE ${JAS_JSON_TYPE}")
+  add_definitions(
+    -DAXZ_JSON
+    -DJAS_USE_WSTR)
+  if(NOT AXZ_AGENT_VERSION_STRING)
+    set(AXZ_AGENT_VERSION_STRING "1.1")
+  endif(NOT AXZ_AGENT_VERSION_STRING)
+  add_subdirectory(json_trait/axzdict)
+  set(JAS_ALL_NEEDED_LIBS ${JAS_ALL_NEEDED_LIBS} axzdct)
+
+elseif("${JAS_JSON_TYPE}" STREQUAL "JSON11")
+  message("USE ${JAS_JSON_TYPE}")
+  add_definitions(-DUSE_JSON11)
+  add_subdirectory(json_trait/json11)
+  include_directories(json_trait/json11)
+  set(JAS_ALL_NEEDED_LIBS ${JAS_ALL_NEEDED_LIBS} json11)
 else()
-    add_library(json11 D:/SourceCode/GitHub/json11/json11.cpp)
-    set(JAS_ALL_NEEDED_LIBS ${JAS_ALL_NEEDED_LIBS} json11)
-endif(USE_AXZ_DICT)
+  message(ERROR "Unsupported json type")
+endif()
 
 message("ALL NEEDED LIBS: ${JAS_ALL_NEEDED_LIBS}")
 target_link_libraries(jas_test ${JAS_ALL_NEEDED_LIBS})

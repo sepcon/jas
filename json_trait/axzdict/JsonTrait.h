@@ -6,15 +6,80 @@
 
 namespace jas {
 
+namespace __details {
+using Json = AxzDict;
+using String = axz_wstring;
+template <class _base_type, class _param_type>
+using _allow_if_constructible_t = std::enable_if_t<
+    std::is_constructible_v<
+        _base_type, std::remove_cv_t<std::remove_reference_t<_param_type>>>,
+    void>;
+
+template <typename T, typename = void>
+struct _TraitImpl;
+
+template <>
+struct _TraitImpl<bool> {
+  static auto defaultValue() { return false; }
+  static bool matchType(const Json& j) { return j.isType(AxzDictType::BOOL); }
+  static bool get(const Json& j) { return j.boolVal(); }
+  static Json makeJson(bool v) { return Json(v); }
+};
+
+template <typename T>
+struct _TraitImpl<T, std::enable_if_t<std::is_integral_v<T>, void>> {
+  static T defaultValue() { return 0; }
+  static bool matchType(const Json& j) { return j.isNumber(); }
+  static T get(const Json& j) { return static_cast<T>(j.intVal()); }
+  static Json makeJson(T v) { return static_cast<int>(v); }
+};
+
+template <typename T>
+struct _TraitImpl<T, std::enable_if_t<std::is_floating_point_v<T>, void>> {
+  static T defaultValue() { return 0.0; }
+  static bool matchType(const Json& j) { return j.isNumber(); }
+  static double get(const Json& j) { return j.numberVal(); }
+  static Json makeJson(T v) { return static_cast<double>(v); }
+};
+
+template <class _string>
+struct _TraitImpl<_string, _allow_if_constructible_t<String, _string>> {
+  static _string defaultValue() { return {}; }
+  static bool matchType(const Json& j) { return j.isString(); }
+  static String get(const Json& j) { return j.stringVal(); }
+  static Json makeJson(_string v) { return Json(std::move(v)); }
+};
+
+template <>
+struct _TraitImpl<axz_dict_array> {
+  static const axz_dict_array& defaultValue() {
+    static axz_dict_array arr;
+    return arr;
+  }
+  static bool matchType(const Json& j) { return j.isArray(); }
+  static const axz_dict_array& get(const Json& j) { return j.arrayVal(); }
+  static Json makeJson(axz_dict_array v) { return Json(std::move(v)); }
+};
+
+template <>
+struct _TraitImpl<axz_dict_object> {
+  static const axz_dict_object& defaultValue() {
+    static axz_dict_object obj;
+    return obj;
+  }
+  static bool matchType(const Json& j) { return j.isObject(); }
+  static const axz_dict_object& get(const Json& j) { return j.objectVal(); }
+  static Json makeJson(axz_dict_object v) { return Json(std::move(v)); }
+};
+
+}  // namespace __details
+
 struct JsonTrait {
   using Json = AxzDict;
   using Object = axz_dict_object;
   using Array = axz_dict_array;
   using String = axz_wstring;
   using Path = std::filesystem::path;
-
-  template <typename T, typename = void>
-  struct _Impl;
 
   static Json parse(const String& s) {
     Json j;
@@ -23,9 +88,9 @@ struct JsonTrait {
   }
 
   template <class T>
-  static Json makeJson(T&& v) {
-    return _Impl<std::decay_t<std::remove_reference_t<T>>>::makeJson(
-        std::forward<T>(v));
+  static Json makeJson(T v) {
+    using PT = std::decay_t<std::remove_reference_t<T>>;
+    return __details::_TraitImpl<PT>::makeJson(std::move(v));
   }
 
   template <class T>
@@ -37,6 +102,7 @@ struct JsonTrait {
            std::is_constructible_v<Array, T>;
   }
 
+  static auto type(const Json& j) { return j.type(); }
   static bool isNull(const Json& j) { return j.isNull(); }
   static bool isDouble(const Json& j) { return j.isNumber(); }
   static bool isInt(const Json& j) { return j.isNumber(); }
@@ -46,15 +112,14 @@ struct JsonTrait {
   static bool isObject(const Json& j) { return j.isObject(); }
   template <typename T>
   static bool isType(const Json& j) {
-    return _Impl<T>::matchType(j);
+    return __details::_TraitImpl<T>::matchType(j);
   }
 
   static bool hasKey(const Json& j, const String& key) {
     return AXZ_SUCCESS(j.contain(key));
   }
   static bool hasKey(const Object& j, const String& key) {
-    auto it = j.find(key);
-    return it != j.end();
+    return j.find(key) != j.end();
   }
 
   static bool equal(const Json& j1, const Json& j2) { return j1 == j2; }
@@ -113,68 +178,21 @@ struct JsonTrait {
   static void add(Array& arr, Json value) { arr.push_back(std::move(value)); }
 
   template <class T>
-  static T get(const Json& j) {
-    if (_Impl<T>::matchType(j)) {
-      return _Impl<T>::get(j);
+  static decltype(auto) get(const Json& j) {
+    if (__details::_TraitImpl<T>::matchType(j)) {
+      return __details::_TraitImpl<T>::get(j);
     }
-    return T{};
+    return __details::_TraitImpl<T>::defaultValue();
   }
 
   template <class T>
   static decltype(auto) get(const Json& j, const String& key) {
     try {
-      return _Impl<T>::get(get(j, key));
+      return __details::_TraitImpl<T>::get(JsonTrait::get(j, key));
     } catch (const std::exception&) {
-      return T{};
+      return __details::_TraitImpl<T>::defaultValue();
     }
   }
-  template <class _base_type, class _param_type>
-  using _allow_if_constructible_t = std::enable_if_t<
-      std::is_constructible_v<
-          _base_type, std::remove_cv_t<std::remove_reference_t<_param_type>>>,
-      void>;
-
-  template <>
-  struct _Impl<bool> {
-    static bool matchType(const Json& j) { return JsonTrait::isBool(j); }
-    static bool get(const Json& j) { return j.boolVal(); }
-    static Json makeJson(bool v) { return Json(v); }
-  };
-
-  template <typename T>
-  struct _Impl<T, std::enable_if_t<std::is_integral_v<T>, void>> {
-    static bool matchType(const Json& j) { return j.isNumber(); }
-    static T get(const Json& j) { return static_cast<T>(j.numberVal()); }
-    static Json makeJson(T v) { return static_cast<int>(v); }
-  };
-
-  template <typename T>
-  struct _Impl<T, std::enable_if_t<std::is_floating_point_v<T>, void>> {
-    static bool matchType(const Json& j) { return j.isNumber(); }
-    static double get(const Json& j) { return j.isNumber(); }
-    static Json makeJson(T v) { return static_cast<double>(v); }
-  };
-
-  template <class _string>
-  struct _Impl<_string, _allow_if_constructible_t<String, _string>> {
-    static bool matchType(const Json& j) { return j.isString(); }
-    static String get(const Json& j) { return j.stringVal(); }
-    static Json makeJson(_string v) { return Json(std::move(v)); }
-  };
-
-  template <>
-  struct _Impl<Array> {
-    static bool matchType(const Json& j) { return j.isArray(); }
-    static const Array& get(const Json& j) { return j.arrayVal(); }
-    static Json makeJson(Array v) { return Json(std::move(v)); }
-  };
-
-  template <>
-  struct _Impl<Object> {
-    static bool matchType(const Json& j) { return j.isObject(); }
-    static const Object& get(const Json& j) { return j.objectVal(); }
-    static Json makeJson(Object v) { return Json(std::move(v)); }
-  };
 
   static String dump(const Json& j) {
     String out;

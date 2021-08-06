@@ -69,3 +69,5 @@ true
 true
 {"@eq":["string", [1,2,3]]}
 false
+{"@gt": [1.2, 1]}
+true

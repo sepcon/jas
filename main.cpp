@@ -20,29 +20,18 @@ namespace fs = std::filesystem;
 using chrono::system_clock;
 
 static const CharType* JASE_TITLE = JASSTR("JAS - Json evAluation Syntax");
-struct __CloggerSection {
-  __CloggerSection(const String& sectionName) {
-    __clogger << "==> " << sectionName << ":\n"
-              << std::setfill(JASSTR('-')) << setw(sectionName.size() + 6)
-              << "\n";
-  }
-  ~__CloggerSection() {
-    __clogger << std::setfill(JASSTR('-')) << setw(30) << '\n';
-  }
-};
 
-#include <mutex>
 void showHelp(int exitCode = -1) {
-  __CloggerSection showTitleSct{JASE_TITLE};
+  CloggerSection showTitleSct{JASE_TITLE};
   clogger() << JASSTR(
       R"(JASE - JAS Evaluator: Parse jas.dat file that contains jas syntax and data for evaluation and show the
 evaluated result!
 
 Usage1: jase.exe /path/to/jas.dat
     structure of jas.dat:
-    - line1: jas syntax (json)
-    - [line2]: (optional) current input data (json), historically - current snapshot
-    - [line3]: (optional) last input data (json), historically - last snapshot
+      - line1: jas syntax (json)
+      - [line2]: (optional) current input data (json), historically - current snapshot
+      - [line3]: (optional) last input data (json), historically - last snapshot
 
 Usage2: jase.exe [--help|--keywords|--version]
     - help: show help instruction and exit
@@ -64,7 +53,7 @@ void exitIf(bool condition, const Msgs&... msg) {
 }
 
 void showSupportedKeywords() {
-  __CloggerSection showTitleSct{JASE_TITLE};
+  CloggerSection showTitleSct{JASE_TITLE};
   HistoricalEvalContext ctxt;
   auto functions = ctxt.supportedFunctions();
   auto displaySequence = [](const auto& sequence, const auto& prefix) {
@@ -115,22 +104,19 @@ void checkInfoQueryInfoOption(const String& argv1) {
 using Ifstream = basic_ifstream<CharType>;
 using Ofstream = basic_ofstream<CharType>;
 
-#ifdef AXZ
-int wmain
-#else
-int main
-#endif
-    (int argc, CharType** argv) {
+int main(int argc, char** argv) {
   if (argc < 2) {
     showHelp();
   }
 
-  checkInfoQueryInfoOption(argv[1]);
+  OStringStream oss;
+  oss << argv[1];
+  checkInfoQueryInfoOption(oss.str());
   // Parsing section...........
 
-  __CloggerSection showTitleSct{JASE_TITLE};
+  CLoggerTimerSection showTitleSct{JASE_TITLE};
   std::error_code ec;
-  auto jasFile = fs::path{argv[1]};
+  auto jasFile = fs::path{oss.str()};
   exitIf(!fs::exists(jasFile, ec), "Input file doens't exist!");
 
   Ifstream ifs(jasFile);
@@ -150,29 +136,30 @@ int main
   auto jcurrentInput = JsonTrait::parse(strCurrentInput);
   auto jLastInput = JsonTrait::parse(strLastInput);
 
-//  try {
+  try {
     auto historicalContext =
         make_shared<HistoricalEvalContext>(nullptr, jcurrentInput, jLastInput);
     auto evaluable = parser::parse(historicalContext, jexpression);
 
     clogger() << "JAS reconstructed: "
-              << parser::reconstructJAS(historicalContext, jexpression);
-    SyntaxEvaluator evaluator;
-
+              << JsonTrait::dump(
+                     parser::reconstructJAS(historicalContext, jexpression));
     SyntaxValidator validator;
     if (!validator.validate(evaluable)) {
-      __CloggerSection syntaxErrorSct(JASSTR("Syntax Error"));
+      CloggerSection syntaxErrorSct(JASSTR("Syntax Error"));
       clogger() << validator.getReport();
       exit(-1);
     } else {
       {
         validator.clear();
-        __CloggerSection transformSyntaxSct(JASSTR("Transformed syntax"));
+        CloggerSection transformSyntaxSct(JASSTR("Transformed syntax"));
         clogger() << validator.generateSyntax(evaluable);
       }
 
       auto lastEvalResultFile = jasFile;
       lastEvalResultFile.replace_extension(".his");
+      auto debugLogFile = jasFile;
+      debugLogFile.replace_extension(".debug");
 
       HistoricalEvalContext::EvaluationResultPtr lastEvalResult;
       if (fs::exists(lastEvalResultFile, ec)) {
@@ -180,29 +167,28 @@ int main
         Ifstream lerifs{lastEvalResultFile};
         historicalContext->loadEvaluationResult(lerifs);
       }
-
-      auto evalStart = system_clock::now();
-      auto evaluated = evaluator.evaluate(evaluable, historicalContext);
-      auto evalTime = chrono::duration_cast<chrono::microseconds>(
-                          system_clock::now() - evalStart)
-                          .count();
-
       {
-        __CloggerSection evalResultSct(JASSTR("Evaluation result"));
-        clogger() << evaluated;
-        clogger() << "\nExc-time: (" << evalTime << ")ms!";
+        CLoggerTimerSection evalResultSct(JASSTR("Evaluation result"));
+        SyntaxEvaluator evaluator;
+        Ofstream debugLogFileStream{debugLogFile};
+        evaluator.setDebugInfoCallback([&debugLogFileStream](const auto& msg) {
+          debugLogFileStream << msg << "\n";
+        });
+
+        auto evaluated = evaluator.evaluate(evaluable, historicalContext);
+        clogger() << (evaluated ? *evaluated : JsonAdapter{});
       }
 
-      Ofstream ofs{lastEvalResultFile};
-      if (historicalContext->saveEvaluationResult(ofs)) {
+      Ofstream lastResultFileStream{lastEvalResultFile};
+
+      if (historicalContext->saveEvaluationResult(lastResultFileStream)) {
         clogger() << "Result saved to " << lastEvalResultFile;
       }
     }
-
-//  } catch (const Exception& e) {
-//    clogger() << "ERROR: " << e.what();
-//    exit(-1);
-//  }
+  } catch (const Exception& e) {
+    clogger() << "ERROR: " << e.what();
+    exit(-1);
+  }
 
   return 0;
 }

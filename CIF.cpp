@@ -35,6 +35,7 @@ static bool is_even(const Json& integer);
 static bool is_odd(const Json& integer);
 static bool empty(const Json& data);
 static bool not_empty(const Json& data);
+static Json abs(const Json& data);
 
 static const FunctionsMap& _funcs_map() {
   static FunctionsMap _ = {
@@ -59,6 +60,7 @@ static const FunctionsMap& _funcs_map() {
       {JASSTR("is_odd"), is_odd},
       {JASSTR("empty"), empty},
       {JASSTR("not_empty"), not_empty},
+      {JASSTR("abs"), abs},
   };
   return _;
 }
@@ -224,7 +226,11 @@ static bool contains(const JsonArray& input) {
 static String to_string(const Json& input) { return JsonTrait::dump(input); }
 
 static time_t unix_timestamp(const Json& input) {
-  IStringStream iss(JsonTrait::get<String>(input));
+  auto strDateTime = JsonTrait::get<String>(input);
+  throwIf<EvaluationError>(
+      strDateTime.empty(),
+      "input of `unix_timestamp` must be string of format [%Y/%m/%d %H:%M:%S]");
+  IStringStream iss(strDateTime);
   std::tm t = {};
   iss >> std::get_time(&t, JASSTR("%Y/%m/%d %H:%M:%S"));
   return std::mktime(&t);
@@ -280,6 +286,16 @@ static bool empty(const Json& data) {
 }
 
 static bool not_empty(const Json& data) { return !empty(data); }
+static Json abs(const Json& data) {
+  throwIf<EvaluationError>(
+      !(JsonTrait::isDouble(data) || JsonTrait::isInt(data)),
+      "Function `abs` accept only number type, given: ", JsonTrait::dump(data));
+  if (JsonTrait::isDouble(data)) {
+    return std::abs(JsonTrait::get<double>(data));
+  } else {
+    return std::abs(JsonTrait::get<int>(data));
+  }
+}
 
 JsonAdapter invoke(const String& funcName, const JsonAdapter& e) {
   return invoke(_funcs_map(), funcName, e);

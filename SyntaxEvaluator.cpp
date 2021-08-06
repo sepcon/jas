@@ -4,9 +4,11 @@
 #include <functional>
 #include <iomanip>
 #include <list>
+#include <numeric>
 #include <sstream>
 #include <string>
 
+#include "CIF.h"
 #include "EvaluableClasses.h"
 #include "Exception.h"
 #include "Keywords.h"
@@ -16,8 +18,10 @@
 #define lambda_on_this(method, ...) [&] { return method(__VA_ARGS__); }
 
 namespace jas {
+using std::make_shared;
 using std::move;
 using EvaluatedValues = std::vector<EvaluatedValue>;
+
 template <class _Exception>
 struct StackUnwin : public _Exception {
   using _Base = _Exception;
@@ -30,6 +34,18 @@ struct ExitCall {
   ~ExitCall() { cb(); }
   _Callable cb;
 };
+
+Json toJson(const JAdapterPtr& jap) {
+  if (jap) {
+    return *jap;
+  } else {
+    return {};
+  }
+}
+
+auto makeEvaluatedVal(JsonAdapter value) {
+  return make_shared<JsonAdapter>(move(value));
+}
 
 template <class _Callable>
 auto callWhenExit(_Callable&& cb) {
@@ -44,37 +60,43 @@ EvaluatedValue filter_if(const JsonArray& list, _Callable&& cond) {
       JsonTrait::add(filtered, item);
     }
   }
-  return filtered;
+  return makeEvaluatedVal(move(filtered));
 }
 
 template <class _Callable>
 EvaluatedValue transform(const JsonArray& list, _Callable&& transf) {
   JsonArray transformed;
   for (auto& item : list) {
-    JsonTrait::add(transformed, transf(item));
+    JsonTrait::add(transformed, toJson(transf(item)));
   }
-  return transformed;
+  return makeEvaluatedVal(move(transformed));
 }
 
 class SyntaxEvaluatorImpl : public EvaluatorBase {
  public:
-  EvaluatedValue evaluatedResult() const;
   EvaluatedValue evaluate(const Evaluable& e,
                           EvalContextPtr rootContext = nullptr);
   EvaluatedValue evaluate(const EvaluablePtr& e,
                           EvalContextPtr rootContext = nullptr);
+
+  void setDebugInfoCallback(DebugOutputCallback);
+
   ~SyntaxEvaluatorImpl();
 
- private:
   struct EvaluationFrame;
   struct EvaluatedOnReadValue;
   using EvaluationStack = std::list<EvaluationFrame>;
   using EvaluatedOnReadValues = std::vector<EvaluatedOnReadValue>;
 
   struct EvaluationFrame {
+    EvaluationFrame(EvalContextPtr _context = {},
+                    EvaluatedValue _returnedValue = {},
+                    const Evaluable* _evb = nullptr)
+        : context(_context), returnedValue(_returnedValue), evb(_evb) {}
+
     EvalContextPtr context;
     EvaluatedValue returnedValue;
-    String debugInfo;
+    const Evaluable* evb;
   };
 
   struct EvaluatedOnReadValue {
@@ -82,7 +104,7 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
         : delegate_(delegate), e_(e) {}
 
     operator EvaluatedValue() const {
-      e_.accept(delegate_);
+      delegate_->_eval(e_);
       return delegate_->takeStackReturnedVal();
     }
 
@@ -90,6 +112,10 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
     const Evaluable& e_;
   };
 
+  EvaluationStack stack_;
+  DebugOutputCallback dbCallback_;
+  int evalCount_ = 0;
+  //-----------------------------------------------
   void eval(const DirectVal& v) override;
   void eval(const EvaluableMap& v) override;
   void eval(const EvaluableArray& v) override;
@@ -100,7 +126,9 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
   void eval(const Function& func) override;
   void eval(const VariableFieldQuery& query) override;
   void eval(const Variable& rv) override;
-
+  void _eval(const Evaluable& e, String ctxtID = {}, JsonAdapter ctxtData = {});
+  void _eval(const EvaluablePtr& e, String ctxtID = {},
+             JsonAdapter ctxtData = {});
   /// Exceptions
   template <class _Exception, typename... _Msg>
   void evalThrowIf(bool cond, _Msg&&... msg);
@@ -109,18 +137,18 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
 
   /// Stack functions
   String stackDump() const;
-  void stackPush(String ctxtID, String debugInfo = JASSTR("__new_stack_frame"),
+  void stackPush(String ctxtID, const Evaluable* evb,
                  JsonAdapter contextData = {});
+  void stackPop();
+  void stackReturn(JsonAdapter val);
   void stackReturn(EvaluatedValue&& val);
   void stackReturn(EvaluatedValue&& val, const Evaluable& ev);
   EvaluatedValue& stackReturnedVal();
   EvaluatedValue takeStackReturnedVal();
-  EvaluationFrame stackPop();
   EvaluationFrame& stackTopFrame();
   const EvalContextPtr& stackTopContext();
   void evaluateContextParams(const ContextParams& params);
-  String stackTraceMsg(const String& msg) const;
-  EvaluatedValue evaluateOne(const EvaluablePtr& e, JsonAdapter ctxtData = {});
+  String generateBackTrace(const String& msg) const;
   String dump(const Evaluables& l);
 
   /// Evaluations:
@@ -154,7 +182,10 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
   template <class T, class _std_op>
   struct ApplyUnaryOpImpl {
     static EvaluatedValue apply(const EvaluatedOnReadValues& evals) {
-      return EvaluatedValue{_std_op{}(EvaluatedValue{evals.back()}.get<T>())};
+      auto evaled = EvaluatedValue{evals.back()};
+      throwIf<EvaluationError>(!evaled, "Evaluated to nullptr");
+      return makeEvaluatedVal(
+          _std_op{}(EvaluatedValue { evals.back() } -> get<T>()));
     }
   };
 
@@ -164,10 +195,10 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
       EvaluatedValue lhsEv = evals.front();
       EvaluatedValue rhsEv = evals.back();
       try {
-        return EvaluatedValue{_std_op{}(lhsEv.get<T>(), rhsEv.get<T>())};
+        return makeEvaluatedVal(_std_op{}(lhsEv->get<T>(), rhsEv->get<T>()));
       } catch (const DirectVal::TypeError&) {
-        throw_<DirectVal::TypeError>("[", JsonTrait::dump(lhsEv), ", ",
-                                     JsonTrait::dump(rhsEv), "]");
+        throw_<DirectVal::TypeError>("(", lhsEv->dump(), ", ", rhsEv->dump(),
+                                     ")");
         return {};
       }
     }
@@ -178,20 +209,20 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
     static EvaluatedValue apply(const EvaluatedOnReadValues& evals) {
       auto it = std::begin(evals);
       EvaluatedValue lastEv = *it++;
-      auto v = lastEv.get<T>();
+      auto v = lastEv->get<T>();
       _std_op applier;
       while (it != std::end(evals)) {
         EvaluatedValue nextEv = *it;
         try {
-          v = applier(v, nextEv.get<T>());
+          v = applier(v, nextEv->get<T>());
           std::swap(lastEv, nextEv);
         } catch (const DirectVal::TypeError&) {
-          throw_<DirectVal::TypeError>("[", JsonTrait::dump(lastEv.value), ", ",
-                                       JsonTrait::dump(nextEv.value), "]");
+          throw_<DirectVal::TypeError>("(", lastEv->dump(), ", ",
+                                       nextEv->dump(), ")");
         }
         ++it;
       }
-      return EvaluatedValue{v};
+      return makeEvaluatedVal(move(v));
     }
   };
 
@@ -203,27 +234,24 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
       for (auto& e : evals) {
         EvaluatedValue nextEv = e;
         try {
-          v = applier(v, static_cast<bool>(nextEv.get<T>()));
+          v = applier(v, static_cast<bool>(nextEv->get<T>()));
           if (v == untilVal) {
             break;
           }
         } catch (const DirectVal::TypeError&) {
-          throw_<DirectVal::TypeError>("[", v, ", ", JsonTrait::dump(nextEv),
-                                       "]");
+          throw_<DirectVal::TypeError>("(", v, ", ", nextEv->dump(), ")");
         }
       }
-      return EvaluatedValue{v};
+      return makeEvaluatedVal(move(v));
     }
   };
   template <class T, class _std_op>
   using ApplyLogicalAndOpImpl = ApplyLogicalOpImpl<T, _std_op, false>;
   template <class T, class _std_op>
   using ApplyLogicalOrOpImpl = ApplyLogicalOpImpl<T, _std_op, true>;
-
-  EvaluationStack stack_;
 };
 
-namespace _details {
+namespace _type_traits {
 template <class T, typename = bool>
 struct OperatorsSupported;
 
@@ -288,13 +316,146 @@ template <class T, class _OpType>
 constexpr bool operationSupported(_OpType op) {
   return OperatorsSupported<T>::supported(op);
 }
-}  // namespace _details
+}  // namespace _type_traits
 
-#define __MC_STACK_START(ctxtID, debugInfo, ...)                  \
-  {                                                               \
-    stackPush(ctxtID, debugInfo, __VA_ARGS__);                    \
-    auto __remember_pop = callWhenExit(lambda_on_this(stackPop)); \
-    try {
+static void __arthThrowIf(bool cond, const String& msg,
+                          const JsonAdapter& first, const JsonAdapter& second) {
+  throwIf<EvaluationError>(cond, msg, ": (", first.dump(), ", ", second.dump(),
+                           ")");
+}
+
+static void __throwIfNotAllNumbers(const JsonAdapter& first,
+                                   const JsonAdapter& second) {
+  __arthThrowIf(!(first.isNumber() && second.isNumber()),
+                JASSTR("Expect 2 numbers"), first, second);
+}
+
+template <class _StdOp>
+struct __Applier {
+  __Applier(const char* name, const JsonAdapter& first,
+            const JsonAdapter& second)
+      : first_(first), second_(second), name_(name) {}
+
+  template <class _Type>
+  __Applier& applyAs() {
+    if (first_.isType<_Type>()) {
+      applied_ = true;
+      __arthThrowIf(
+          !second_.isType<_Type>(),
+          strJoin("operator[", name_, "] Expected 2 values of same type"),
+          first_, second_);
+      result_ = _StdOp{}(first_.get<_Type>(), second_.get<_Type>());
+    }
+    return *this;
+  }
+
+  __Applier& applyAsNumber() {
+    if (first_.isNumber()) {
+      applied_ = true;
+      __arthThrowIf(!second_.isNumber(),
+                    strJoin("operator[", name_, "] Expected 2 numbers"), first_,
+                    second_);
+      result_ = _StdOp{}(first_.get<double>(), second_.get<double>());
+    }
+    return *this;
+  }
+
+  JsonAdapter takeResult() {
+    __arthThrowIf(!applied_, strJoin("operator[", name_, "] Not applicable on"),
+                  first_, second_);
+    return move(result_);
+  }
+
+  operator bool() const { return applied_; }
+
+  const JsonAdapter& first_;
+  const JsonAdapter& second_;
+  JsonAdapter result_;
+  const char* name_;
+  bool applied_ = false;
+};
+
+template <class _StdOp>
+auto __applier(const char* name, const JsonAdapter& first,
+               const JsonAdapter& second) {
+  return __Applier<_StdOp>(name, first, second);
+}
+
+static JsonAdapter operator+(const JsonAdapter& first,
+                             const JsonAdapter& second) {
+  auto applier = __applier<std::plus<>>("+", first, second);
+  applier.applyAsNumber() || applier.applyAs<String>();
+  return applier.takeResult();
+}
+
+static JsonAdapter operator-(const JsonAdapter& first,
+                             const JsonAdapter& second) {
+  return __applier<std::minus<>>("-", first, second)
+      .applyAsNumber()
+      .takeResult();
+}
+
+static JsonAdapter operator*(const JsonAdapter& first,
+                             const JsonAdapter& second) {
+  return __applier<std::multiplies<>>("*", first, second)
+      .applyAsNumber()
+      .takeResult();
+}
+
+static JsonAdapter operator/(const JsonAdapter& first,
+                             const JsonAdapter& second) {
+  __throwIfNotAllNumbers(first, second);
+  __arthThrowIf(std::numeric_limits<double>::epsilon() >
+                    std::abs(second.get<double>() - 0.0),
+                JASSTR("Devide by zero"), first, second);
+  return first.get<double>() / second.get<double>();
+}
+static JsonAdapter operator<(const JsonAdapter& first,
+                             const JsonAdapter& second) {
+  auto applier = __applier<std::less<>>("<", first, second);
+  applier.applyAsNumber() || applier.applyAs<String>();
+  return applier.takeResult();
+}
+
+static bool operator>(const JsonAdapter& first, const JsonAdapter& second) {
+  return second < first;
+}
+static bool operator==(const JsonAdapter& first, const JsonAdapter& second) {
+  return JsonTrait::equal(second, first);
+}
+static bool operator!=(const JsonAdapter& first, const JsonAdapter& second) {
+  return !JsonTrait::equal(second, first);
+}
+static bool operator>=(const JsonAdapter& first, const JsonAdapter& second) {
+  return JsonTrait::equal(second, first) || first > second;
+}
+static bool operator<=(const JsonAdapter& first, const JsonAdapter& second) {
+  return JsonTrait::equal(second, first) || first < second;
+}
+
+template <class _StdOperator>
+static JsonAdapter binaryOperationAccumulate(
+    const SyntaxEvaluatorImpl::EvaluatedOnReadValues& evaluatedVals) {
+  JsonAdapter result;
+  throwIf<EvaluationError>(evaluatedVals.size() < 2,
+                           "Size must be greator than 2");
+
+  auto op = _StdOperator{};
+  auto it = std::begin(evaluatedVals);
+  EvaluatedValue e = *it;
+  throwIf<EvaluationError>(!e, "Evaluated to null");
+  std::swap(*e, result);
+  while (++it != std::end(evaluatedVals)) {
+    EvaluatedValue e = *it;
+    throwIf<EvaluationError>(!e, "Evaluated to null");
+    result = op(result, *e);
+  }
+  return result;
+}
+
+#define __MC_STACK_START(ctxtID, evb, ...) \
+  stackPush(ctxtID, evb, ##__VA_ARGS__);   \
+  try {
 #define __MC_STACK_END                              \
   }                                                 \
   catch (const StackUnwin<SyntaxError>& e) {        \
@@ -314,7 +475,6 @@ constexpr bool operationSupported(_OpType op) {
   }                                                 \
   catch (...) {                                     \
     evalThrow<jas::Exception>("Unknown exception"); \
-  }                                                 \
   }
 
 #define __MC_STACK_END_RETURN(ret) __MC_STACK_END return ret;
@@ -335,17 +495,13 @@ constexpr bool operationSupported(_OpType op) {
 template <class _Exception, typename... _Msg>
 void SyntaxEvaluatorImpl::evalThrowIf(bool cond, _Msg&&... msg) {
   if (cond) {
-    throw_<StackUnwin<_Exception>>(stackTraceMsg(strJoin(msg...)));
+    throw_<StackUnwin<_Exception>>(generateBackTrace(strJoin(msg...)));
   }
 }
 
 template <class _Exception, typename... _Msg>
 void SyntaxEvaluatorImpl::evalThrow(_Msg&&... msg) {
-  throw_<StackUnwin<_Exception>>(stackTraceMsg(strJoin(msg...)));
-}
-
-EvaluatedValue SyntaxEvaluatorImpl::evaluatedResult() const {
-  return stack_.back().returnedValue;
+  throw_<StackUnwin<_Exception>>(generateBackTrace(strJoin(msg...)));
 }
 
 EvaluatedValue SyntaxEvaluatorImpl::evaluate(const Evaluable& e,
@@ -356,17 +512,13 @@ EvaluatedValue SyntaxEvaluatorImpl::evaluate(const Evaluable& e,
     if (!stack_.empty()) {
       stack_.clear();
     }
-
-    stack_.emplace_back(EvaluationFrame{move(rootContext), EvaluatedValue{},
-                                        JASSTR("__main_frame__")});
-    auto rememberPop = callWhenExit(lambda_on_this(stackPop));
-    e.accept(this);
-    evaluated = evaluatedResult();
-
+    // push root context to stack as main entry
+    stack_.emplace_back(move(rootContext));
+    _eval(e);
+    evaluated = takeStackReturnedVal();
   } else {
     throw_<SyntaxError>(validator.getReport());
   }
-
   return evaluated;
 }
 
@@ -379,13 +531,19 @@ EvaluatedValue SyntaxEvaluatorImpl::evaluate(const EvaluablePtr& e,
   }
 }
 
+void SyntaxEvaluatorImpl::setDebugInfoCallback(DebugOutputCallback cb) {
+  dbCallback_ = move(cb);
+}
+
 SyntaxEvaluatorImpl::~SyntaxEvaluatorImpl() {
   while (!stack_.empty()) {
     stack_.pop_back();
   }
 }
 
-void SyntaxEvaluatorImpl::eval(const DirectVal& v) { stackReturn(v.value); }
+void SyntaxEvaluatorImpl::eval(const DirectVal& v) {
+  stackReturn(static_cast<const JsonAdapter&>(v));
+}
 
 void SyntaxEvaluatorImpl::eval(const EvaluableMap& v) {
   JsonObject evaluated;
@@ -396,22 +554,19 @@ void SyntaxEvaluatorImpl::eval(const EvaluableMap& v) {
   evaluateContextParams(v.ctxtParams);
 
   for (auto& [key, val] : v.value) {
-    //    try {
-    val->accept(this);
-    evaluated.emplace(key, takeStackReturnedVal());
-    //    } catch (const EvaluationError&) {
-    //      evaluated.emplace(key, Json{});
-    //    }
+    this->_eval(val, key);
+    evaluated.emplace(key, toJson(takeStackReturnedVal()));
   }
-  stackReturn({move(evaluated)}, v);
+  stackReturn(makeEvaluatedVal(evaluated), v);
 }
 
 void SyntaxEvaluatorImpl::eval(const EvaluableArray& v) {
   JsonArray evaluated;
+  auto itemIdx = 0;
   for (auto& val : v.value) {
     try {
-      val->accept(this);
-      evaluated.emplace_back(takeStackReturnedVal());
+      _eval(val, strJoin(itemIdx));
+      evaluated.emplace_back(toJson(takeStackReturnedVal()));
     } catch (const EvaluationError&) {
       evaluated.emplace_back(Json{});
     }
@@ -446,30 +601,26 @@ void SyntaxEvaluatorImpl::eval(const ArithmaticalOperator& op) {
         return applyMultiBinOp<ArithmeticOperatorType,
                                ArithmeticOperatorType::bit_xor, std::bit_xor>(
             evaluatedVals);
-      case ArithmeticOperatorType::divides:
-        return applyMultiBinOp<ArithmeticOperatorType,
-                               ArithmeticOperatorType::divides, std::divides>(
-            evaluatedVals);
-      case ArithmeticOperatorType::minus:
-        return applyMultiBinOp<ArithmeticOperatorType,
-                               ArithmeticOperatorType::minus, std::minus>(
-            evaluatedVals);
       case ArithmeticOperatorType::modulus:
         return applyMultiBinOp<ArithmeticOperatorType,
                                ArithmeticOperatorType::modulus, std::modulus>(
             evaluatedVals);
+      case ArithmeticOperatorType::divides:
+        return makeEvaluatedVal(
+            binaryOperationAccumulate<std::divides<>>(evaluatedVals));
+      case ArithmeticOperatorType::minus:
+        return makeEvaluatedVal(
+            binaryOperationAccumulate<std::minus<>>(evaluatedVals));
       case ArithmeticOperatorType::multiplies:
-        return applyMultiBinOp<ArithmeticOperatorType,
-                               ArithmeticOperatorType::multiplies,
-                               std::multiplies>(evaluatedVals);
+        return makeEvaluatedVal(
+            binaryOperationAccumulate<std::multiplies<>>(evaluatedVals));
       case ArithmeticOperatorType::negate:
         return applyUnaryOp<ArithmeticOperatorType,
                             ArithmeticOperatorType::negate, std::negate>(
             evaluatedVals);
       case ArithmeticOperatorType::plus:
-        return applyMultiBinOp<ArithmeticOperatorType,
-                               ArithmeticOperatorType::plus, std::plus>(
-            evaluatedVals);
+        return makeEvaluatedVal(
+            binaryOperationAccumulate<std::plus<>>(evaluatedVals));
       default:
         return EvaluatedValue{};
     }
@@ -509,32 +660,30 @@ void SyntaxEvaluatorImpl::eval(const ComparisonOperator& op) {
   makeSureSingleBinaryOp(op);
   auto e = evaluateOperator(op, [&op, this](auto&& evaluated) {
     __MC_BASIC_OPERATION_EVAL_START(op)
-    auto apply = [&](auto&& stdop) {
-      return EvaluatedValue{stdop(EvaluatedValue{evaluated.front()},
-                                  EvaluatedValue{evaluated.back()})};
+    auto __applyOp = [&](auto&& stdop) {
+      EvaluatedValue first = evaluated.front();
+      EvaluatedValue second = evaluated.back();
+      throwIf<EvaluationError>(
+          !first || !second, JASSTR("Compare with null: ("),
+          (first ? first->dump() : JASSTR("null")), JASSTR(", "),
+          (second ? second->dump() : JASSTR("null")), JASSTR(")"));
+
+      return makeEvaluatedVal(stdop(*first, *second));
     };
 
     switch (op.type) {
       case ComparisonOperatorType::eq:
-        return apply(std::equal_to<Json>());
+        return __applyOp(std::equal_to{});
       case ComparisonOperatorType::gt:
-        return applySingleBinOp<ComparisonOperatorType,
-                                ComparisonOperatorType::gt, std::greater>(
-            evaluated);
+        return __applyOp(std::greater{});
       case ComparisonOperatorType::ge:
-        return applySingleBinOp<ComparisonOperatorType,
-                                ComparisonOperatorType::ge, std::greater_equal>(
-            evaluated);
+        return __applyOp(std::greater_equal{});
       case ComparisonOperatorType::lt:
-        return applySingleBinOp<ComparisonOperatorType,
-                                ComparisonOperatorType::lt, std::less>(
-            evaluated);
+        return __applyOp(std::less{});
       case ComparisonOperatorType::le:
-        return applySingleBinOp<ComparisonOperatorType,
-                                ComparisonOperatorType::le, std::less_equal>(
-            evaluated);
+        return __applyOp(std::less_equal{});
       case ComparisonOperatorType::neq:
-        return apply(std::not_equal_to<Json>());
+        return __applyOp(std::not_equal_to{});
       default:
         return EvaluatedValue{};
     }
@@ -544,90 +693,96 @@ void SyntaxEvaluatorImpl::eval(const ComparisonOperator& op) {
 }
 
 void SyntaxEvaluatorImpl::eval(const ListOperation& op) {
-  auto opSyntax = syntaxOf(op);
   EvaluatedValue finalEvaled;
-  __MC_STACK_START(strJoin(op.type), opSyntax);
   EvaluatedValue vlist;
   if (op.list) {
-    vlist = evaluateOne(op.list);
+    _eval(op.list);
+    vlist = takeStackReturnedVal();
   }
 
   evalThrowIf<EvaluationError>(
-      !vlist.isType<JsonArray>(),
+      !vlist->isType<JsonArray>(),
       "`@list` input of list operation was not evaluated to array type");
 
   evaluateContextParams(op.ctxtParams);
-  auto list = vlist.get<JsonArray>();
+  auto list = vlist->get<JsonArray>();
   int itemIdx = 0;
-  auto eval_impl = [this, &itemIdx, &op, &opSyntax](const Json& data) {
-    __MC_STACK_START(strJoin(itemIdx++), syntaxOf(*op.cond), data);
-    auto evaluated = evaluateOne(op.cond, data);
+  auto eval_impl = [this, &itemIdx, &op](const Json& data) {
+    _eval(op.cond, strJoin(itemIdx++), data);
+    auto evaluated = takeStackReturnedVal();
     evalThrowIf<EvaluationError>(
-        !evaluated.isType<bool>(), "Invalid param type > operation: ", opSyntax,
-        "` > expected: `boolean` > real_val: `", evaluated.dump(), "`");
-    return evaluated.get<bool>();
-    __MC_STACK_END_RETURN(false);
+        !evaluated->isType<bool>(),
+        "Invalid param type > operation: ", syntaxOf(op),
+        "` > expected: `boolean` > real_val: `", evaluated->dump(), "`");
+    return evaluated->get<bool>();
   };
 
   switch (op.type) {
     case ListOperationType::any_of:
-      finalEvaled = std::any_of(std::begin(list), std::end(list), eval_impl);
+      finalEvaled = makeEvaluatedVal(
+          std::any_of(std::begin(list), std::end(list), eval_impl));
       break;
     case ListOperationType::all_of:
-      finalEvaled = std::all_of(std::begin(list), std::end(list), eval_impl);
+      finalEvaled = makeEvaluatedVal(
+          std::all_of(std::begin(list), std::end(list), eval_impl));
       break;
     case ListOperationType::none_of:
-      finalEvaled = std::none_of(std::begin(list), std::end(list), eval_impl);
+      finalEvaled = makeEvaluatedVal(
+          std::none_of(std::begin(list), std::end(list), eval_impl));
       break;
     case ListOperationType::count_if:
-      finalEvaled = std::count_if(std::begin(list), std::end(list), eval_impl);
+      finalEvaled = makeEvaluatedVal(
+          std::count_if(std::begin(list), std::end(list), eval_impl));
       break;
     case ListOperationType::filter_if:
       finalEvaled = filter_if(list, eval_impl);
       break;
     case ListOperationType::transform:
       finalEvaled = transform(list, [this, &itemIdx, &op](const Json& data) {
-        __MC_STACK_START(strJoin(itemIdx++), syntaxOf(*op.cond), data);
-        return evaluateOne(op.cond, data);
-        __MC_STACK_END_RETURN(EvaluatedValue{})
+        _eval(op.cond, strJoin(itemIdx++), data);
+        return takeStackReturnedVal();
       });
       break;
     default:
       break;
   }
-  __MC_STACK_END
   stackReturn(move(finalEvaled), op);
 }
 
 void SyntaxEvaluatorImpl::eval(const Function& func) {
   evalThrowIf<SyntaxError>(func.name.empty(),
                            "Function name must not be empty");
-  EvaluatedValue evaluated;
-  __MC_STACK_START(func.name, syntaxOf(func));
+  JsonAdapter funcRet;
   evaluateContextParams(func.ctxtParams);
-  evaluated = stackTopContext()->invoke(func.name, evaluateOne(func.param));
-  __MC_STACK_END
-  stackReturn(move(evaluated), func);
+  _eval(func.param);
+  auto evaledParam = toJson(takeStackReturnedVal());
+  try {
+    funcRet = cif::invoke(func.name, evaledParam);
+  } catch (const FunctionNotFoundError&) {
+    funcRet = stackTopContext()->invoke(func.name, evaledParam);
+  }
+  stackReturn(makeEvaluatedVal(move(funcRet)), func);
 }
 
 void SyntaxEvaluatorImpl::eval(const VariableFieldQuery& query) {
   auto& varname = query.id;
   auto var = stackTopContext()->property(varname);
   do {
-    if (JsonTrait::isNull(var)) {
-      stackReturn({});
+    if (!var || var->isNull()) {
+      stackReturn(EvaluatedValue{});
       break;
     }
 
     JsonTrait::Path path;
     for (auto& evbField : query.field_path) {
-      auto field = evaluateOne(evbField);
-      evalThrowIf<EvaluationError>(!JsonTrait::isString(field),
+      _eval(evbField);
+      auto field = takeStackReturnedVal();
+      evalThrowIf<EvaluationError>(!field->isType<String>(),
                                    "Cannot evaluated to a valid path");
-      path /= JsonTrait::get<String>(field);
+      path /= field->get<String>();
     }
 
-    stackReturn(JsonTrait::get(var.value, path));
+    stackReturn(JsonTrait::get(var->value, path));
   } while (false);
 }
 
@@ -638,22 +793,31 @@ void SyntaxEvaluatorImpl::eval(const Variable& prop) {
   stackReturn(move(val));
 }
 
+void SyntaxEvaluatorImpl::_eval(const Evaluable& e, String ctxtID,
+                                JsonAdapter ctxtData) {
+  __MC_STACK_START(move(ctxtID), &e, std::move(ctxtData));
+  e.accept(this);
+  __MC_STACK_END
+}
+
+void SyntaxEvaluatorImpl::_eval(const EvaluablePtr& e, String ctxtID,
+                                JsonAdapter ctxtData) {
+  __MC_STACK_START(move(ctxtID), e.get(), std::move(ctxtData));
+  if (e) {
+    e->accept(this);
+  }
+  __MC_STACK_END
+}
+
 String SyntaxEvaluatorImpl::stackDump() const {
   OStringStream oss;
   oss << std::boolalpha;
   int i = static_cast<int>(stack_.size());
   for (auto iframe = std::rbegin(stack_); iframe != std::rend(stack_);
        ++iframe) {
-    oss << "#" << i-- << ": " << std::setw(15) << iframe->debugInfo;
-
-    if (!iframe->returnedValue.isNull()) {
-      oss << " ==>> ( ";
-      oss << iframe->returnedValue.dump();
-    } else {
-      oss << " ==>> ( evaluating...";
-    }
-
-    oss << " )";
+    oss << "#" << i-- << ": " << std::setw(15)
+        << (iframe->evb ? syntaxOf(*iframe->evb)
+                        : JASSTR("----------##--------"));
     if (auto ctxinfo = iframe->context->debugInfo(); !ctxinfo.empty()) {
       oss << " --> [ctxt]: " << iframe->context->debugInfo();
     }
@@ -662,11 +826,15 @@ String SyntaxEvaluatorImpl::stackDump() const {
   return oss.str();
 }
 
-void SyntaxEvaluatorImpl::stackPush(String ctxtID, String debugInfo,
+void SyntaxEvaluatorImpl::stackPush(String ctxtID, const Evaluable* evb,
                                     JsonAdapter contextData) {
-  stack_.emplace_back(
+  stack_.push_back(
       EvaluationFrame{stackTopContext()->subContext(ctxtID, move(contextData)),
-                      EvaluatedValue{}, move(debugInfo)});
+                      EvaluatedValue{}, evb});
+}
+
+void SyntaxEvaluatorImpl::stackReturn(JsonAdapter val) {
+  stackReturn(makeEvaluatedVal(move(val)));
 }
 
 void SyntaxEvaluatorImpl::stackReturn(EvaluatedValue&& val) {
@@ -689,14 +857,19 @@ EvaluatedValue jas::SyntaxEvaluatorImpl::takeStackReturnedVal() {
   using namespace std;
   EvaluatedValue e;
   swap(e, stackReturnedVal());
+  if (dbCallback_ && stackTopFrame().evb) {
+    auto& evb = *(stackTopFrame().evb);
+    if (typeid(evb) != typeid(DirectVal)) {
+      dbCallback_(strJoin(
+          ++evalCount_, JASSTR(". "), syntaxOf(*stackTopFrame().evb),
+          JASSTR("\n\t\t`--> "), (e ? e->dump() : JASSTR("null"))));
+    }
+  }
+  stackPop();
   return e;
 }
 
-SyntaxEvaluatorImpl::EvaluationFrame SyntaxEvaluatorImpl::stackPop() {
-  auto top = move(stack_.back());
-  stack_.pop_back();
-  return top;
-}
+void SyntaxEvaluatorImpl::stackPop() { stack_.pop_back(); }
 
 SyntaxEvaluatorImpl::EvaluationFrame& SyntaxEvaluatorImpl::stackTopFrame() {
   return stack_.back();
@@ -709,30 +882,17 @@ const EvalContextPtr& SyntaxEvaluatorImpl::stackTopContext() {
 void SyntaxEvaluatorImpl::evaluateContextParams(const ContextParams& params) {
   auto ctxt = stackTopContext();
   for (auto& [name, evb] : params) {
-    ctxt->setProperty(name, evaluateOne(evb));
+    _eval(evb);
+    ctxt->setProperty(name, takeStackReturnedVal());
   }
 }
 
-String SyntaxEvaluatorImpl::stackTraceMsg(const String& msg) const {
+String SyntaxEvaluatorImpl::generateBackTrace(const String& msg) const {
   OStringStream oss;
   oss << "Msg: " << msg << "\n"
       << "EVStack trace: \n"
       << stackDump();
   return oss.str();
-}
-
-EvaluatedValue SyntaxEvaluatorImpl::evaluateOne(const EvaluablePtr& evb,
-                                                JsonAdapter ctxtData) {
-  EvaluatedValue evaluated;
-  if (evb) {
-    evb->accept(this);
-    auto& frame = stackTopFrame();
-    if (!JsonTrait::isNull(frame.returnedValue)) {
-      // dont move, swap with json null is safer
-      std::swap(evaluated, frame.returnedValue);
-    }
-  }
-  return evaluated;
 }
 
 String SyntaxEvaluatorImpl::dump(const Evaluables& l) {
@@ -755,11 +915,11 @@ template <class _optype_t, _optype_t _optype_val,
 EvaluatedValue SyntaxEvaluatorImpl::applyOp(
     const EvaluatedOnReadValues& frame) {
   EvaluatedValue firstEvaluated = frame.front();
-  return firstEvaluated.visitValue(
+  return firstEvaluated->visitValue(
       [&frame, this](auto&& val) {
         using ValType =
             std::remove_const_t<std::remove_reference_t<decltype(val)>>;
-        if constexpr (_details::operationSupported<ValType>(_optype_val)) {
+        if constexpr (_type_traits::operationSupported<ValType>(_optype_val)) {
           return _applier_impl<ValType, _std_op<ValType>>::apply(frame);
         } else {
           evalThrow<EvaluationError>("operation ", _optype_val,
@@ -774,7 +934,6 @@ EvaluatedValue SyntaxEvaluatorImpl::applyOp(
 template <class _Operation, class _Callable>
 EvaluatedValue SyntaxEvaluatorImpl::evaluateOperator(const _Operation& op,
                                                      _Callable&& eval_func) {
-  __MC_STACK_START(strJoin(op.type), syntaxOf(op));
   evaluateContextParams(op.ctxtParams);
   // evaluate all params
   EvaluatedOnReadValues inlevals;
@@ -783,7 +942,6 @@ EvaluatedValue SyntaxEvaluatorImpl::evaluateOperator(const _Operation& op,
   }
   // then apply the operation:
   return eval_func(inlevals);
-  __MC_STACK_END_RETURN(EvaluatedValue{});
 }
 
 template <class _compare_method, size_t expected_count, class _operation>
@@ -845,10 +1003,6 @@ SyntaxEvaluator::SyntaxEvaluator() : impl_{new SyntaxEvaluatorImpl} {}
 
 SyntaxEvaluator::~SyntaxEvaluator() { delete impl_; }
 
-EvaluatedValue SyntaxEvaluator::evaluatedResult() const {
-  return impl_->evaluatedResult();
-}
-
 EvaluatedValue SyntaxEvaluator::evaluate(const Evaluable& e,
                                          EvalContextPtr rootContext) {
   return impl_->evaluate(e, move(rootContext));
@@ -857,6 +1011,11 @@ EvaluatedValue SyntaxEvaluator::evaluate(const Evaluable& e,
 EvaluatedValue SyntaxEvaluator::evaluate(const EvaluablePtr& e,
                                          EvalContextPtr rootContext) {
   return impl_->evaluate(e, move(rootContext));
+}
+
+void SyntaxEvaluator::setDebugInfoCallback(
+    DebugOutputCallback debugOutputCallback) {
+  impl_->setDebugInfoCallback(move(debugOutputCallback));
 }
 
 }  // namespace jas

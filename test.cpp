@@ -25,8 +25,6 @@ using test_cases = std::vector<test_case>;
 __mc_jas_exception(data_error);
 
 static int run_all_tests(const fs::path& testcase_dir);
-static void begin_test(const fs::path& test_data_file);
-static void end_test(const fs::path& test_data_file);
 static test_cases load_no_input_test_cases(const fs::path& data_file);
 static test_cases load_has_input_test_cases(const fs::path& data_file);
 static void run_test_case(const test_case& tc);
@@ -40,6 +38,7 @@ static int total_passes = 0;
 static int total_failed = 0;
 
 static int run_all_tests(const fs::path& testcase_dir) {
+  CLoggerTimerSection allTestSection(JASSTR("All test"));
   std::error_code ec;
   for (auto it = fs::directory_iterator{testcase_dir, ec};
        it != fs::directory_iterator{}; ++it) {
@@ -52,7 +51,8 @@ static int run_all_tests(const fs::path& testcase_dir) {
         load_test_cases = load_has_input_test_cases;
       }
       if (load_test_cases) {
-        begin_test(test_data_file);
+        CLoggerTimerSection testFileSection{
+            strJoin("Testing file: ", test_data_file)};
         try {
           auto tcs = load_test_cases(test_data_file);
           for (auto& tc : tcs) {
@@ -65,7 +65,6 @@ static int run_all_tests(const fs::path& testcase_dir) {
         } catch (const data_error& de) {
           clogger() << "Failed to parse test case: " << de.what();
         }
-        end_test(test_data_file);
       }
     }
   }
@@ -73,12 +72,6 @@ static int run_all_tests(const fs::path& testcase_dir) {
             << "\nTotal passes: " << total_passes
             << "\nTotal failed: " << total_failed;
   return total_failed;
-}
-static void begin_test(const fs::path& test_data_file) {
-  clogger() << "start testing file " << test_data_file.filename();
-}
-static void end_test(const fs::path& test_data_file) {
-  clogger() << "finished testing file " << test_data_file.filename();
 }
 
 static test_cases load_no_input_test_cases(const fs::path& data_file) {
@@ -144,16 +137,24 @@ static void run_test_case(const test_case& tc) {
 
       auto evaluated = SyntaxEvaluator{}.evaluate(
           evaluable, make_eval_ctxt(tc.context_data));
-      if (JsonTrait::equal(tc.expected, evaluated.value)) {
+      if (JsonTrait::equal(tc.expected, evaluated->value)) {
         success_test_case(tc);
       } else {
-        failed_test_case(tc, syntax, &evaluated.value);
+        failed_test_case(tc, syntax, &evaluated->value);
       }
     } else {
       failed_test_case(tc, JASSTR(""), nullptr, JASSTR("Failed to parse data"));
     }
   } catch (const Exception& e) {
-    failed_test_case(tc, JsonTrait::dump(tc.rule), nullptr, e.what());
+    if (auto exceptionName =
+            JsonTrait::get<String>(tc.expected, JASSTR("@exception"));
+        !exceptionName.empty()) {
+      if (e.details.find(exceptionName) != String::npos) {
+        success_test_case(tc);
+      }
+    } else {
+      failed_test_case(tc, JsonTrait::dump(tc.rule), nullptr, e.what());
+    }
   }
 }
 
@@ -192,6 +193,7 @@ static EvalContextPtr make_eval_ctxt(Json data) {
 
 using namespace jas;
 int main(int argc, char** argv) {
+  CloggerSection test{JASSTR("JAS TEST")};
   if (argc == 2) {
     return jas::run_all_tests(argv[1]);
   } else {

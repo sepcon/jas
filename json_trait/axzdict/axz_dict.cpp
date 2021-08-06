@@ -184,7 +184,9 @@ public:
                 val = ( int32_t )this->m_val;
                 return AXZ_OK;
         }
-
+        bool equals(const _AxzDicVal& other) const override {
+          return ::abs(m_val - other.numberVal()) < std::numeric_limits<double>::epsilon();
+        }
         virtual double numberVal() const override	{ return this->m_val; }
         virtual int32_t intVal() const override		{ return ( int32_t )this->m_val; }
 };
@@ -205,7 +207,9 @@ public:
                 val = this->m_val;
                 return AXZ_OK;
         }
-
+        bool equals(const _AxzDicVal& other) const override {
+            return ::abs(m_val - other.numberVal()) < std::numeric_limits<double>::epsilon();
+        }
         virtual double numberVal() const override	{ return ( double )this->m_val; }
         virtual int32_t intVal() const override		{ return this->m_val; }
 };
