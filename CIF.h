@@ -15,7 +15,7 @@ __mc_jas_exception(FunctionNotFoundError);
 __mc_jas_exception(FunctionInvalidArgTypeError);
 __mc_jas_exception(FunctionNotImplementedError);
 
-JsonAdapter invoke(const FunctionsMap& funcs_map, const String& func_name,
+JsonAdapter invoke(const FunctionsMap& funcsMap, const String& funcName,
                    const JsonAdapter& e);
 
 /// No-Input function: a mask for ignoring input
@@ -40,3 +40,17 @@ JsonAdapter invoke(const String& funcName, const JsonAdapter& e = {});
 }  // namespace cif
 
 }  // namespace jas
+
+#define __jas_ni_func_throw_invalidargs(errmsg) \
+  throw_<InvalidArgument>("function `", __func__, "`: ", errmsg)
+
+#define __jas_func_throw_invalidargs(errmsg, jparam)             \
+  throw_<InvalidArgument>("function `", __func__, "`: ", errmsg, \
+                          ", given: ", JsonTrait::dump(jparam))
+
+#define __jas_ni_func_throw_invalidargs_if(cond, errmsg) \
+  throwIf<InvalidArgument>(cond, "function `", __func__, "`: ", errmsg)
+
+#define __jas_func_throw_invalidargs_if(cond, errmsg, jparam)           \
+  throwIf<InvalidArgument>(cond, "function `", __func__, "`: ", errmsg, \
+                           ", given: ", JsonTrait::dump(jparam))

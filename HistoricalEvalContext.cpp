@@ -4,6 +4,7 @@
 #include <cassert>
 #include <memory>
 
+#include "CIF.h"
 #include "Exception.h"
 #include "Keywords.h"
 
@@ -151,10 +152,13 @@ JsonAdapter HistoricalEvalContext::snchg(const Json& jpath) {
 }
 
 JsonAdapter HistoricalEvalContext::evchg(const Json& json) {
+  __jas_func_throw_invalidargs_if(!JsonTrait::isString(json),
+                                  "property name must be non-empty string",
+                                  json);
+
   auto propID = JsonTrait::get<String>(json);
-  throwIf<SyntaxError>(
-      propID.empty(),
-      "Input of `evchg` function must be name of a property and not empty");
+  __jas_ni_func_throw_invalidargs_if(propID.empty(),
+                                     "property name must not be empty");
   auto changed = true;
   if (auto itProp = properties_.find(propID); itProp != std::end(properties_)) {
     auto& levr = *lastEvalResult();
@@ -189,10 +193,8 @@ JsonAdapter HistoricalEvalContext::field_lv(const Json& path) {
   if (JsonTrait::isString(path)) {
     sp = JsonTrait::get<String>(path);
   } else {
-    throwIf<SyntaxError>(!JsonTrait::isNull(path), JASSTR("path of func `"),
-                         func_name::field_lv,
-                         JASSTR("` must be string or nothing, given is: "),
-                         JsonTrait::dump(path));
+    __jas_func_throw_invalidargs_if(!JsonTrait::isNull(path),
+                                    "input must be string or nothing", path);
   }
   return snapshotValue(sp, SnapshotIdxOld);
 }
@@ -203,19 +205,17 @@ JsonAdapter HistoricalEvalContext::field_cv(const Json& path) {
   if (JsonTrait::isString(path)) {
     sp = JsonTrait::get<String>(path);
   } else {
-    throwIf<SyntaxError>(JsonTrait::isNull(path), JASSTR("path of func `"),
-                         func_name::field_cv,
-                         JASSTR("` must be string or nothing, given is: "),
-                         JsonTrait::dump(path));
+    __jas_func_throw_invalidargs_if(JsonTrait::isNull(path),
+                                    "must be string or nothing", path);
   }
 
   return snapshotValue(sp, SnapshotIdxNew);
 }
 
 JsonAdapter HistoricalEvalContext::hfield2arr(const Json& params) {
-  throwIf<SyntaxError>(JsonTrait::size(params) != 2, JASSTR("param of `"),
-                       func_name::hfield2arr,
-                       JASSTR("` Must not be array of [path, iid]"));
+  __jas_func_throw_invalidargs_if(JsonTrait::size(params) != 2,
+                                  " input must be array of [path, iid]",
+                                  params);
 
   return hfield(
       JsonObject{{JASSTR("path"), params[0]}, {JASSTR("iid"), params[1]}});
@@ -351,8 +351,9 @@ static HistoricalEvalContext::SnapshotIdx _toSnapshotIdx(
   } else if (snapshot == cstr::sncur) {
     return HistoricalEvalContext::SnapshotIdxNew;
   } else {
-    throw_<SyntaxError>("Snapshot can be empty or '", cstr::sncur, "' or '",
-                        cstr::snlst, "' only!");
+    __jas_ni_func_throw_invalidargs(strJoin("Snapshot can be empty or '",
+                                            cstr::sncur, "' or '", cstr::snlst,
+                                            "' only!"));
   }
   // never come here!
   return HistoricalEvalContext::SnapshotIdxNew;

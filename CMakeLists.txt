@@ -18,6 +18,7 @@ add_library(jas
     EvalContextBase.h
     HistoricalEvalContext.h
     Json.h
+    jaop.h
     Keywords.h
     CIF.h
     ConsoleLogger.h

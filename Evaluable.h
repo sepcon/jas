@@ -2,8 +2,8 @@
 
 #include <memory>
 
-#include "String.h"
 #include "Json.h"
+#include "String.h"
 
 namespace jas {
 
@@ -14,6 +14,7 @@ struct Evaluable {
   Evaluable(String _id = {}) : id(std::move(_id)) {}
   virtual ~Evaluable() = default;
   virtual void accept(class EvaluatorBase* e) const = 0;
+  virtual bool useStack() const = 0;
   String id;
 };
 

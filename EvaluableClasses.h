@@ -23,8 +23,16 @@ struct Function;
 struct VariableFieldQuery;
 struct Variable;
 using Evaluables = std::vector<EvaluablePtr>;
-//                            param_name <-> evaluabe
-using ContextParams = std::map<String, EvaluablePtr>;
+struct VariableInfo;
+using StackVariables = std::map<String, VariableInfo>;
+using StackVariablesPtr = std::shared_ptr<StackVariables>;
+
+struct VariableInfo {
+  enum State { NotEvaluated, Evaluating, Evaluated };
+  VariableInfo(EvaluablePtr v) : variable(std::move(v)) {}
+  EvaluablePtr variable;
+  State state = NotEvaluated;
+};
 
 class EvaluatorBase {
  public:
@@ -49,44 +57,56 @@ struct __BeEvaluable : public Evaluable {
   }
 };
 
-struct DirectVal : public Evaluable, public JsonAdapter {
+template <class _SpecEvaluable>
+struct __UseStackEvaluable : public __BeEvaluable<_SpecEvaluable> {
+  using __BeEvaluable<_SpecEvaluable>::__BeEvaluable;
+  bool useStack() const override { return true; }
+};
+
+template <class _SpecEvaluable>
+struct __NoStackEvaluable : public __BeEvaluable<_SpecEvaluable> {
+  using __BeEvaluable<_SpecEvaluable>::__BeEvaluable;
+  bool useStack() const override { return false; }
+};
+
+struct DirectVal : public __NoStackEvaluable<DirectVal>, public JsonAdapter {
   using Base = JsonAdapter;
   using Base::Base;
-
-  void accept(EvaluatorBase* e) const override { e->eval(*this); }
+  //  bool useStack() override { return false; }
+  //  void accept(EvaluatorBase* e) const override { e->eval(*this); }
 };
 
-struct EvaluableMap : public __BeEvaluable<EvaluableMap> {
+struct EvaluableMap : public __UseStackEvaluable<EvaluableMap> {
   using value_type = std::map<String, EvaluablePtr>;
-  EvaluableMap(value_type v = {}, ContextParams cp = {})
-      : value{std::move(v)}, ctxtParams{std::move(cp)} {}
+  EvaluableMap(value_type v = {}, StackVariablesPtr cp = {})
+      : value{std::move(v)}, stackVariables{std::move(cp)} {}
   value_type value;
-  ContextParams ctxtParams;
+  StackVariablesPtr stackVariables;
 };
 
-struct EvaluableArray : public __BeEvaluable<EvaluableArray> {
+struct EvaluableArray : public __UseStackEvaluable<EvaluableArray> {
   using value_type = std::vector<EvaluablePtr>;
   EvaluableArray(value_type v = {}) : value{std::move(v)} {}
   value_type value;
 };
 
 template <class _SubType, class _Type>
-struct _OperatorBase : public __BeEvaluable<_SubType> {
+struct _OperatorBase : public __UseStackEvaluable<_SubType> {
   using Param = Evaluable;
   using ParamPtr = EvaluablePtr;
   using Params = Evaluables;
   using OperatorType = _Type;
 
-  _OperatorBase(String id, OperatorType t, Params p, ContextParams cp)
-      : __BeEvaluable<_SubType>(std::move(id)),
+  _OperatorBase(String id, OperatorType t, Params p, StackVariablesPtr cp)
+      : __UseStackEvaluable<_SubType>(std::move(id)),
         type{t},
         params{std::move(p)},
-        ctxtParams{std::move(cp)} {}
+        stackVariables{std::move(cp)} {}
   void add_param(ParamPtr p) { params.push_back(std::move(p)); }
 
   OperatorType type;
   Params params;
-  ContextParams ctxtParams;
+  StackVariablesPtr stackVariables;
 };
 
 enum class ArithmeticOperatorType : int32_t {
@@ -257,43 +277,44 @@ inline OStream& operator<<(OStream& os, ListOperationType o) {
   return os;
 }
 
-struct ListOperation : public __BeEvaluable<ListOperation> {
+struct ListOperation : public __UseStackEvaluable<ListOperation> {
   ListOperation(String id, ListOperationType t, EvaluablePtr c,
-                EvaluablePtr list = {}, ContextParams cp = {})
-      : __BeEvaluable<ListOperation>(std::move(id)),
+                EvaluablePtr list = {}, StackVariablesPtr cp = {})
+      : __UseStackEvaluable<ListOperation>(std::move(id)),
         type(t),
         list(std::move(list)),
         cond(std::move(c)),
-        ctxtParams(std::move(cp)) {}
+        stackVariables(std::move(cp)) {}
 
   ListOperationType type;
   EvaluablePtr list;
   EvaluablePtr cond;
-  ContextParams ctxtParams;
+  StackVariablesPtr stackVariables;
 };
 
-struct Function : public __BeEvaluable<Function> {
-  Function(String id, String name, EvaluablePtr param, ContextParams cp = {})
-      : __BeEvaluable<Function>(std::move(id)),
+struct Function : public __UseStackEvaluable<Function> {
+  Function(String id, String name, EvaluablePtr param,
+           StackVariablesPtr cp = {})
+      : __UseStackEvaluable<Function>(std::move(id)),
         name(std::move(name)),
         param(std::move(param)),
-        ctxtParams(std::move(cp)) {}
+        stackVariables(std::move(cp)) {}
 
   String name;
   EvaluablePtr param;
-  ContextParams ctxtParams;
+  StackVariablesPtr stackVariables;
 };
 
-struct VariableFieldQuery : public __BeEvaluable<VariableFieldQuery> {
-  using _Base = __BeEvaluable<VariableFieldQuery>;
+struct VariableFieldQuery : public __UseStackEvaluable<VariableFieldQuery> {
+  using _Base = __UseStackEvaluable<VariableFieldQuery>;
   VariableFieldQuery(String name, std::vector<EvaluablePtr> path)
       : _Base(std::move(name)), field_path(std::move(path)) {}
 
   std::vector<EvaluablePtr> field_path;
 };
 
-struct Variable : public __BeEvaluable<Variable> {
-  using _Base = __BeEvaluable<Variable>;
+struct Variable : public __UseStackEvaluable<Variable> {
+  using _Base = __UseStackEvaluable<Variable>;
   using _Base::_Base;
 };
 
@@ -313,27 +334,27 @@ inline auto makeDV(Json val) {
   return std::make_shared<DirectVal>(std::move(val));
 }
 inline auto makeOp(String id, ArithmeticOperatorType op, Evaluables params,
-                   ContextParams cp = {}) {
+                   StackVariablesPtr cp = {}) {
   return std::make_shared<ArithmaticalOperator>(
       std::move(id), op, std::move(params), std::move(cp));
 }
 inline auto makeOp(String id, LogicalOperatorType op, Evaluables params,
-                   ContextParams cp = {}) {
+                   StackVariablesPtr cp = {}) {
   return std::make_shared<LogicalOperator>(std::move(id), op, std::move(params),
                                            std::move(cp));
 }
 inline auto makeOp(String id, ComparisonOperatorType op, Evaluables params,
-                   ContextParams cp = {}) {
+                   StackVariablesPtr cp = {}) {
   return std::make_shared<ComparisonOperator>(std::move(id), op,
                                               std::move(params), std::move(cp));
 }
 inline auto makeOp(String id, ListOperationType op, EvaluablePtr cond,
-                   EvaluablePtr list, ContextParams cp = {}) {
+                   EvaluablePtr list, StackVariablesPtr cp = {}) {
   return std::make_shared<ListOperation>(std::move(id), op, std::move(cond),
                                          std::move(list), std::move(cp));
 }
 inline auto makeFnc(String id, String name, EvaluablePtr param = {},
-                    ContextParams cp = {}) {
+                    StackVariablesPtr cp = {}) {
   return std::make_shared<Function>(std::move(id), std::move(name),
                                     std::move(param), std::move(cp));
 }

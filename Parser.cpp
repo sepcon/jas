@@ -27,6 +27,9 @@ struct EvaluableInfo {
   Json params;
   String id;
 };
+
+using std::make_shared;
+using std::move;
 using OptionalEvbInfo = std::optional<EvaluableInfo>;
 using Regex = std::basic_regex<CharType>;
 using RegexMatchResult = std::match_results<String::const_iterator>;
@@ -151,14 +154,19 @@ struct ParserImpl {
     return {};
   }
 
-  static ContextParams extractContextParams(ParserImpl* parser, const Json& j) {
-    ContextParams ctxtParams;
+  static StackVariablesPtr extractStackVariables(ParserImpl* parser,
+                                                 const Json& j) {
+    StackVariables stackVariables;
     for (auto& [key, val] : jsonGet<JsonObject>(j)) {
       if (key.size() > 1 && key[0] == prefix::variable) {
-        ctxtParams.emplace(key.substr(1), parser->parseImpl(val));
+        stackVariables.emplace(key.substr(1),
+                               VariableInfo{parser->parseImpl(val)});
       }
     }
-    return ctxtParams;
+    if (!stackVariables.empty()) {
+      return make_shared<StackVariables>(move(stackVariables));
+    }
+    return {};
   }
 
   template <class _op_parser, class _operation_type>
@@ -193,7 +201,7 @@ struct ParserImpl {
             params.emplace_back(parser->parseImpl(jevaluation));
           }
           return makeOp(std::move(id), op, std::move(params),
-                        extractContextParams(parser, expression));
+                        extractStackVariables(parser, expression));
         }
       }
       return {};
@@ -304,16 +312,16 @@ struct ParserImpl {
             list = parser->parseImpl(jlistExpr);
           }
 
-          auto ctxtParams = extractContextParams(parser, expression);
+          auto stackVariables = extractStackVariables(parser, expression);
           output = makeOp(id, op, std::move(evbCond), std::move(list),
-                          ctxtParams);
+                          stackVariables);
           break;
         }
 
         if (JsonTrait::isBool(jevaluable)) {
           output =
               makeOp(id, op, makeDV(jevaluable), listFromCurrentContextData(),
-                     extractContextParams(parser, expression));
+                     extractStackVariables(parser, expression));
         }
 
       } while (false);
@@ -385,7 +393,7 @@ struct ParserImpl {
           if (parser->functionSupported(funcName)) {
             return makeFnc(std::move(id), move(funcName),
                            parser->parseImpl(jevaluable),
-                           extractContextParams(parser, expr));
+                           extractStackVariables(parser, expr));
           }
         }
       } else if (JsonTrait::isString(expr)) {
@@ -617,7 +625,7 @@ struct ParserImpl {
 
     auto evbMap = makeEMap();
     String id;
-    evbMap->ctxtParams = extractContextParams(this, j);
+    StackVariables stackVariables;
     for (auto& [key, jvalue] : JsonTrait::get<JsonObject>(j)) {
       if (key == keyword::id) {
         throwIf<SyntaxError>(!JsonTrait::isString(jvalue),
@@ -625,10 +633,14 @@ struct ParserImpl {
                              JASSTR("` must be a string"));
         evbMap->id = jsonGet<String>(jvalue);
       } else if (!key.empty() && key[0] == prefix::variable) {
-        evbMap->ctxtParams.emplace(key.substr(1), parseImpl(jvalue));
+        stackVariables.emplace(key.substr(1), parseImpl(jvalue));
       } else {
         evbMap->value.emplace(key, parseImpl(jvalue));
       }
+    }
+    if (!stackVariables.empty()) {
+      evbMap->stackVariables =
+          make_shared<StackVariables>(std::move(stackVariables));
     }
     return evbMap;
   }

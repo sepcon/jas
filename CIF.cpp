@@ -37,7 +37,7 @@ static bool empty(const Json& data);
 static bool not_empty(const Json& data);
 static Json abs(const Json& data);
 
-static const FunctionsMap& _funcs_map() {
+static const FunctionsMap& _funcsMap() {
   static FunctionsMap _ = {
       {JASSTR("current_time"), __ni(current_time)},
       {JASSTR("current_time_diff"), current_time_diff},
@@ -126,12 +126,11 @@ static String toupper(const String& input) {
 }
 
 static int cmp_ver(const JsonArray& input) {
-  throwIf<EvaluationError>(
+  __jas_func_throw_invalidargs_if(
       JsonTrait::size(input) != 2 || !JsonTrait::isString(input[0]) ||
           !JsonTrait::isString(input[1]),
-      strJoin(
-          R"(function `cmp_ver`: invalid argument type > [expect] `["str_first", "str_second"]` > [observed]: `)",
-          JsonTrait::dump(input), "`"));
+      R"(invalid argument type > [expect] `["str_first", "str_second"]`)",
+      input);
 
   return Version{JsonTrait::get<String>(input[0])}.cmp(
       JsonTrait::get<String>(input[1]));
@@ -181,13 +180,13 @@ static bool matchVer(const Version& ver, const Json& pattern) {
   }
 }
 static bool match_ver(const JsonArray& input) {
-  throwIf<EvaluationError>(
+  __jas_ni_func_throw_invalidargs_if(
       input.size() < 2,
-      R"(input of `match_ver` must satisfy: ["version", ["pattern1", ..."patternN"], or ["version", "pattern1", .... "patternN"])");
+      R"(input must satisfy: ["version", ["pattern1", ..."patternN"], or ["version", "pattern1", .... "patternN"])");
 
-  throwIf<EvaluationError>(!JsonTrait::isString(input[0]),
-                           "`match_ver`: input version must be a string [",
-                           JsonTrait::dump(input[0]), "]");
+  __jas_func_throw_invalidargs_if(!JsonTrait::isString(input[0]),
+                                  "input version must be a string", input[0]);
+
   Version ver = JsonTrait::get<String>(input[0]);
 
   size_t i = 1;
@@ -200,10 +199,9 @@ static bool match_ver(const JsonArray& input) {
 }
 
 static bool contains(const JsonArray& input) {
-  throwIf<EvaluationError>(
+  __jas_func_throw_invalidargs_if(
       !JsonTrait::isArray(input) || JsonTrait::size(input) != 2,
-      R"(function `contains`: invalid input arguments > [expect] `["first", "second"]` > [observed]: `)",
-      JsonTrait::dump(input), "`");
+      R"(expect: ["first", "second"])", input);
 
   if (JsonTrait::isString(input[0])) {
     auto first = JsonTrait::get<String>(input[0]);
@@ -212,11 +210,8 @@ static bool contains(const JsonArray& input) {
     decltype(auto) arr = JsonTrait::get<JsonArray>(input[0]);
     return std::find(std::begin(arr), std::end(arr), input[1]) != std::end(arr);
   } else if (JsonTrait::isObject(input[0])) {
-    throwIf<EvaluationError>(
-        !JsonTrait::isString(input[1]),
-        "function `contains`: invalid arguments: [expect] `second arg is "
-        "string` > [given]: `",
-        JsonTrait::dump(input[1]), "`");
+    __jas_func_throw_invalidargs_if(!JsonTrait::isString(input[1]),
+                                    "expect: second arg is string`", input);
     return JsonTrait::hasKey(input[0], JsonTrait::get<String>(input[1]));
   } else {
     return false;
@@ -225,15 +220,34 @@ static bool contains(const JsonArray& input) {
 
 static String to_string(const Json& input) { return JsonTrait::dump(input); }
 
-static time_t unix_timestamp(const Json& input) {
-  auto strDateTime = JsonTrait::get<String>(input);
-  throwIf<EvaluationError>(
-      strDateTime.empty(),
-      "input of `unix_timestamp` must be string of format [%Y/%m/%d %H:%M:%S]");
+static time_t _unix_timestamp(const String& strDateTime,
+                              const CharType* format) {
   IStringStream iss(strDateTime);
   std::tm t = {};
-  iss >> std::get_time(&t, JASSTR("%Y/%m/%d %H:%M:%S"));
+  iss >> std::get_time(&t, format);
   return std::mktime(&t);
+}
+
+static time_t unix_timestamp(const Json& input) {
+  if (JsonTrait::isString(input)) {
+    auto strDateTime = JsonTrait::get<String>(input);
+    __jas_ni_func_throw_invalidargs_if(
+        strDateTime.empty(),
+        "input of `unix_timestamp` must be string of "
+        "format [%Y/%m/%d %H:%M:%S]");
+    return _unix_timestamp(strDateTime, JASSTR("%Y/%m/%d %H:%M:%S"));
+  } else if (JsonTrait::isArray(input)) {
+    decltype(auto) arr = JsonTrait::get<JsonArray>(input);
+    __jas_func_throw_invalidargs_if(
+        arr.size() != 2 ||
+            !(JsonTrait::isString(arr[0]) && JsonTrait::isString(arr[1])),
+        "input must be array of 2 strings", input);
+    return _unix_timestamp(JsonTrait::get<String>(arr[0]),
+                           JsonTrait::get<String>(arr[1]).c_str());
+  } else {
+    __jas_ni_func_throw_invalidargs("Unrecognized argument");
+    return -1;
+  }
 }
 
 static bool has_null_val(const Json& input) {
@@ -259,16 +273,15 @@ static bool has_null_val(const Json& input) {
 }
 
 static size_t size_of(const Json& input) {
-  throwIf<EvaluationError>(
+  __jas_func_throw_invalidargs_if(
       !(JsonTrait::isArray(input) || JsonTrait::isObject(input)),
-      JASSTR("input of size_of function must be json object or array"));
+      JASSTR("input must be array or object"), input);
   return JsonTrait::size(input);
 }
 
 static bool is_even(const Json& integer) {
-  throwIf<EvaluationError>(!JsonTrait::isInt(integer),
-                           "Function `is_even` - expected an integer, given: ",
-                           JsonTrait::dump(integer));
+  __jas_func_throw_invalidargs_if(!JsonTrait::isInt(integer),
+                                  "expected an integer", integer);
   return JsonTrait::get<int>(integer) % 2 == 0;
 }
 
@@ -278,18 +291,16 @@ static bool empty(const Json& data) {
   if (JsonTrait::isArray(data) || JsonTrait::isObject(data)) {
     return JsonTrait::size(data) == 0;
   } else {
-    throw_<EvaluationError>(
-        "Function `empty` applies for array/object only, given: ",
-        JsonTrait::dump(data));
+    __jas_func_throw_invalidargs(" applies for array/object only", data);
   }
   return true;
 }
 
 static bool not_empty(const Json& data) { return !empty(data); }
 static Json abs(const Json& data) {
-  throwIf<EvaluationError>(
+  __jas_func_throw_invalidargs_if(
       !(JsonTrait::isDouble(data) || JsonTrait::isInt(data)),
-      "Function `abs` accept only number type, given: ", JsonTrait::dump(data));
+      "accept only number type", data);
   if (JsonTrait::isDouble(data)) {
     return std::abs(JsonTrait::get<double>(data));
   } else {
@@ -298,16 +309,16 @@ static Json abs(const Json& data) {
 }
 
 JsonAdapter invoke(const String& funcName, const JsonAdapter& e) {
-  return invoke(_funcs_map(), funcName, e);
+  return invoke(_funcsMap(), funcName, e);
 }
 
 bool supported(const String& funcName) {
-  return _funcs_map().find(funcName) != _funcs_map().end();
+  return _funcsMap().find(funcName) != _funcsMap().end();
 }
 
 std::vector<String> supportedFunctions() {
   std::vector<String> funcs;
-  std::transform(begin(_funcs_map()), std::end(_funcs_map()),
+  std::transform(begin(_funcsMap()), std::end(_funcsMap()),
                  std::back_insert_iterator(funcs),
                  [](auto&& p) { return p.first; });
   return funcs;
@@ -315,17 +326,17 @@ std::vector<String> supportedFunctions() {
 
 }  // namespace cif
 
-JsonAdapter invoke(const FunctionsMap& funcs_map, const String& func_name,
+JsonAdapter invoke(const FunctionsMap& funcsMap, const String& funcName,
                    const JsonAdapter& e) {
-  auto it = funcs_map.find(func_name);
-  throwIf<FunctionNotFoundError>(!(it != funcs_map.end()),
-                                 JASSTR("Unkown function `"), func_name,
+  auto it = funcsMap.find(funcName);
+  throwIf<FunctionNotFoundError>(!(it != funcsMap.end()),
+                                 JASSTR("Unkown function `"), funcName,
                                  JASSTR("`!"));
   try {
     return it->second(e);
   } catch (const JsonAdapter::TypeError& e) {
     throw_<FunctionInvalidArgTypeError>(
-        JASSTR("Failed invoking function `"), func_name,
+        JASSTR("Failed invoking function `"), funcName,
         JASSTR("` due to invalid argument type: "), e.what());
     return {};
   }

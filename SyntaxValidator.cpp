@@ -81,16 +81,16 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   void evaluate(const EvaluablePtr& e) { e->accept(this); }
   void evaluate(const Evaluable& e) { e.accept(this); }
 
-  bool dumpCtxtParams(const ContextParams& params) {
-    if (!params.empty()) {
+  bool dumpstackVariables(const StackVariablesPtr& params) {
+    if (params) {
       os_ << "set(";
-      auto it = std::begin(params);
+      auto it = std::begin(*params);
       os_ << "$" << it->first << '=';
-      this->evaluate(it->second);
-      for (; ++it != std::end(params);) {
+      this->evaluate(it->second.variable);
+      for (; ++it != std::end(*params);) {
         os_ << JASSTR(",");
         os_ << "$" << it->first << '=';
-        this->evaluate(it->second);
+        this->evaluate(it->second.variable);
       }
       os_ << ").then";
       return true;
@@ -107,7 +107,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   }
 
   void eval(const EvaluableMap& e) override {
-    dumpCtxtParams(e.ctxtParams);
+    dumpstackVariables(e.stackVariables);
     os_ << JASSTR("{");
     if (!e.value.empty()) {
       auto it = std::begin(e.value);
@@ -161,7 +161,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   }
 
   void eval(const ListOperation& op) override {
-    dumpCtxtParams(op.ctxtParams);
+    dumpstackVariables(op.stackVariables);
     decorateId(op);
     os_ << op.type << JASSTR("(");
     if (!op.list) {
@@ -180,7 +180,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   }
 
   void eval(const Function& fnc) override {
-    dumpCtxtParams(fnc.ctxtParams);
+    dumpstackVariables(fnc.stackVariables);
     decorateId(fnc);
     os_ << (fnc.name.empty()
                 ? bookMarkError(JASSTR("Funtion name must not be empty"))
@@ -227,7 +227,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
 
   template <class T>
   void dumpPreUnaryOp(const _OperatorBase<T, typename T::OperatorType>& op) {
-    dumpCtxtParams(op.ctxtParams);
+    dumpstackVariables(op.stackVariables);
     os_ << JASSTR("(");
     os_ << op.type;
     if (op.params.empty()) {
@@ -244,7 +244,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   template <class T>
   void dumpBinaryOp(const _OperatorBase<T, typename T::OperatorType>& op,
                     bool exact2 = false) {
-    dumpCtxtParams(op.ctxtParams);
+    dumpstackVariables(op.stackVariables);
     os_ << JASSTR("(");
     if (op.params.size() < 2) {
       if (op.params.empty()) {

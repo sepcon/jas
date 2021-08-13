@@ -53,8 +53,6 @@ JAdapterPtr EvalContextBase::property(const String &name) const {
       prop = it->second;
     } else if (parent_) {
       prop = parent_->property(name);
-    } else {
-      throw_<EvaluationError>("Property not found: ", name);
     }
   } while (false);
   return prop;

@@ -20,7 +20,7 @@ struct Exception {
 
 __mc_jas_exception(SyntaxError);
 __mc_jas_exception(EvaluationError);
-__mc_jas_exception(DataError);
+__mc_jas_exception(InvalidArgument);
 
 //#undef __mc_jas_exception
 
