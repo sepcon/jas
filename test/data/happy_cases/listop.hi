@@ -10,9 +10,6 @@ true
 {"@all_of":{"@list":"@field:list","@cond":{"@and":[{"@eq":[{"@plus":[{"@field":"int1"},{"@field":"int2"}]},2]},{"@lt":[{"@field":"string1"},{"@field":"string2"}]}]}}}
 {"list":[{"id":1,"int1":1,"int2":1,"string1":"1","string2":"2"}, {"id":1,"int1":1,"int2":1,"string1":"2","string2":"2"}]}
 false
-{"@size_of":"@field:list"}
-{"list":[1,2,3,4,5]}
-5
 {"@any_of":true}
 [2]
 true

@@ -30,7 +30,7 @@ static bool contains(const JsonArray& input);
 static String to_string(const Json& input);
 static time_t unix_timestamp(const Json& input);
 static bool has_null_val(const Json& input);
-static size_t size_of(const Json& input);
+static size_t len(const Json& input);
 static bool is_even(const Json& integer);
 static bool is_odd(const Json& integer);
 static bool empty(const Json& data);
@@ -55,7 +55,7 @@ static const FunctionsMap& _funcsMap() {
       {JASSTR("to_string"), to_string},
       {JASSTR("unix_timestamp"), unix_timestamp},
       {JASSTR("has_null_val"), has_null_val},
-      {JASSTR("size_of"), size_of},
+      {JASSTR("len"), len},
       {JASSTR("is_even"), is_even},
       {JASSTR("is_odd"), is_odd},
       {JASSTR("empty"), empty},
@@ -272,11 +272,15 @@ static bool has_null_val(const Json& input) {
   return false;
 }
 
-static size_t size_of(const Json& input) {
-  __jas_func_throw_invalidargs_if(
-      !(JsonTrait::isArray(input) || JsonTrait::isObject(input)),
-      JASSTR("input must be array or object"), input);
-  return JsonTrait::size(input);
+static size_t len(const Json& input) {
+  if (JsonTrait::isString(input)) {
+    return JsonTrait::get<String>(input).size();
+  } else {
+    __jas_func_throw_invalidargs_if(
+        !(JsonTrait::isArray(input) || JsonTrait::isObject(input)),
+        JASSTR("input must be array or object"), input);
+    return JsonTrait::size(input);
+  }
 }
 
 static bool is_even(const Json& integer) {
@@ -291,7 +295,7 @@ static bool empty(const Json& data) {
   if (JsonTrait::isArray(data) || JsonTrait::isObject(data)) {
     return JsonTrait::size(data) == 0;
   } else {
-    __jas_func_throw_invalidargs(" applies for array/object only", data);
+    __jas_func_throw_invalidargs("applies for array/object only", data);
   }
   return true;
 }

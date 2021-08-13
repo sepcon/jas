@@ -128,11 +128,13 @@ class SyntaxValidatorImpl : public EvaluatorBase {
 
   void eval(const EvaluableArray& e) override {
     os_ << JASSTR("[");
-    auto it = std::begin(e.value);
-    evaluate(*it);
-    while (++it != std::end(e.value)) {
-      os_ << JASSTR(",");
+    if (!e.value.empty()) {
+      auto it = std::begin(e.value);
       evaluate(*it);
+      while (++it != std::end(e.value)) {
+        os_ << JASSTR(",");
+        evaluate(*it);
+      }
     }
     os_ << JASSTR("]");
   }

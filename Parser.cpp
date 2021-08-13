@@ -92,7 +92,6 @@ struct ParserImpl {
         keyword::all_of,
         keyword::any_of,
         keyword::none_of,
-        keyword::size_of,
         keyword::count_if,
         keyword::filter_if,
         keyword::transform,
@@ -283,8 +282,8 @@ struct ParserImpl {
         EvaluablePtr evbCond;
         EvaluablePtr list;
 
-        auto listFromCurrentContextData = [parser] {
-          return parser->parseImpl(JsonObject{{JASSTR("@field"), JASSTR("")}});
+        auto listFromCurrentContextData = [] {
+          return makeFnc({}, JASSTR("field"));
         };
 
         if (JsonTrait::isObject(jevaluable)) {

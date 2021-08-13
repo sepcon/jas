@@ -188,7 +188,7 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
       auto evaled = EvaluatedValue{evals.back()};
       throwIf<EvaluationError>(!evaled, "Evaluated to null");
       return makeEvaluatedVal(
-          _std_op{}(EvaluatedValue { evals.back() }->get<T>()));
+          _std_op{}(EvaluatedValue { evals.back() } -> get<T>()));
     }
   };
 
@@ -581,15 +581,17 @@ void SyntaxEvaluatorImpl::eval(const ComparisonOperator& op) {
 void SyntaxEvaluatorImpl::eval(const ListOperation& op) {
   EvaluatedValue finalEvaled;
   EvaluatedValue vlist;
+
+  evaluateVariables(op.stackVariables);
+
   if (op.list) {
     vlist = _evalRet(op.list.get());
   }
 
   evalThrowIf<EvaluationError>(
-      !vlist->isType<JsonArray>(),
+      !vlist || !vlist->isType<JsonArray>(),
       "`@list` input of list operation was not evaluated to array type");
 
-  evaluateVariables(op.stackVariables);
   auto list = vlist->get<JsonArray>();
   int itemIdx = 0;
   auto eval_impl = [this, &itemIdx, &op](const Json& data) {

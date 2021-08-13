@@ -29,7 +29,6 @@ inline const auto neq = JASSTR("@neq");
 inline const auto all_of = JASSTR("@all_of");
 inline const auto any_of = JASSTR("@any_of");
 inline const auto none_of = JASSTR("@none_of");
-inline const auto size_of = JASSTR("@size_of");
 inline const auto count_if = JASSTR("@count_if");
 inline const auto filter_if = JASSTR("@filter_if");
 inline const auto transform = JASSTR("@transform");
