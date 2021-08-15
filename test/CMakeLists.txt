@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 function(jas_add_executable ExecutableName)
     add_executable(${ExecutableName} ${ExecutableName}.cpp)
     target_precompile_headers(${ExecutableName} REUSE_FROM jas)
-    target_link_libraries(${ExecutableName} ${JAS_ALL_NEEDED_LIBS})
+    target_link_libraries(${ExecutableName} ${JAS_LIBS_ALL})
 endfunction(jas_add_executable)
 
 jas_add_executable(jase)

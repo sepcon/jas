@@ -5,9 +5,9 @@ project(jas LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(JAS_NEEDED_INCLUDE_PATHS include)
+set(JAS_INCLUDE_PATHS include)
 
-set(JAS_ALL_NEEDED_LIBS jas)
+set(JAS_LIBS_ALL jas)
 
 if(NOT JAS_JSON_TYPE)
     set(JAS_JSON_TYPE nlohmann)
@@ -18,20 +18,20 @@ elseif("${JAS_JSON_TYPE}" STREQUAL "axzdict")
         set(AXZ_AGENT_VERSION_STRING "1.1")
     endif(NOT AXZ_AGENT_VERSION_STRING)
     add_subdirectory(3rd/axzdict)
-    set(JAS_ALL_NEEDED_LIBS ${JAS_ALL_NEEDED_LIBS} axzdct)
+    set(JAS_LIBS_ALL ${JAS_LIBS_ALL} axzdct)
 
 elseif("${JAS_JSON_TYPE}" STREQUAL "json11")
     message("USE ${JAS_JSON_TYPE}")
     add_subdirectory(3rd/json11)
-    set(JAS_ALL_NEEDED_LIBS ${JAS_ALL_NEEDED_LIBS} json11)
+    set(JAS_LIBS_ALL ${JAS_LIBS_ALL} json11)
 else()
     message(ERROR "Unsupported json type")
 endif()
 
-set(JAS_NEEDED_INCLUDE_PATHS ${JAS_NEEDED_INCLUDE_PATHS} 3rd/${JAS_JSON_TYPE})
-set(JAS_NEEDED_INCLUDE_PATHS ${JAS_NEEDED_INCLUDE_PATHS} include/jas/json_trait/${JAS_JSON_TYPE})
+set(JAS_INCLUDE_PATHS ${JAS_INCLUDE_PATHS} 3rd/${JAS_JSON_TYPE})
+set(JAS_INCLUDE_PATHS ${JAS_INCLUDE_PATHS} include/jas/json_trait/${JAS_JSON_TYPE})
 
-include_directories(${JAS_NEEDED_INCLUDE_PATHS})
+include_directories(${JAS_INCLUDE_PATHS})
 
 add_library(jas
     include/jas/Version.h
@@ -63,5 +63,5 @@ add_subdirectory(test)
 include(pch.cmake)
 target_precompile_headers(jas PRIVATE ${JAS_PRECOMPILE_HEADERS})
 
-message("ALL NEEDED LIBS: ${JAS_ALL_NEEDED_LIBS}")
+message("ALL NEEDED LIBS: ${JAS_LIBS_ALL}")
 
