@@ -3,12 +3,12 @@
 #include <fstream>
 #include <iostream>
 
-#include "ConsoleLogger.h"
-#include "HistoricalEvalContext.h"
-#include "Json.h"
-#include "Parser.h"
-#include "SyntaxEvaluator.h"
-#include "SyntaxValidator.h"
+#include "jas/ConsoleLogger.h"
+#include "jas/HistoricalEvalContext.h"
+#include "jas/Json.h"
+#include "jas/Parser.h"
+#include "jas/SyntaxEvaluator.h"
+#include "jas/SyntaxValidator.h"
 
 namespace jas {
 namespace fs = std::filesystem;

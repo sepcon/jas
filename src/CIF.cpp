@@ -1,4 +1,4 @@
-#include "CIF.h"
+#include "jas/CIF.h"
 
 #include <algorithm>
 #include <cctype>
@@ -312,6 +312,22 @@ static Json abs(const Json& data) {
   }
 }
 
+static JsonAdapter invoke(const FunctionsMap& funcsMap, const String& funcName,
+                          const JsonAdapter& e) {
+  auto it = funcsMap.find(funcName);
+  throwIf<FunctionNotFoundError>(!(it != funcsMap.end()),
+                                 JASSTR("Unkown function `"), funcName,
+                                 JASSTR("`!"));
+  try {
+    return it->second(e);
+  } catch (const JsonAdapter::TypeError& e) {
+    throw_<FunctionInvalidArgTypeError>(
+        JASSTR("Failed invoking function `"), funcName,
+        JASSTR("` due to invalid argument type: "), e.what());
+    return {};
+  }
+}
+
 JsonAdapter invoke(const String& funcName, const JsonAdapter& e) {
   return invoke(_funcsMap(), funcName, e);
 }
@@ -329,21 +345,5 @@ std::vector<String> supportedFunctions() {
 }
 
 }  // namespace cif
-
-JsonAdapter invoke(const FunctionsMap& funcsMap, const String& funcName,
-                   const JsonAdapter& e) {
-  auto it = funcsMap.find(funcName);
-  throwIf<FunctionNotFoundError>(!(it != funcsMap.end()),
-                                 JASSTR("Unkown function `"), funcName,
-                                 JASSTR("`!"));
-  try {
-    return it->second(e);
-  } catch (const JsonAdapter::TypeError& e) {
-    throw_<FunctionInvalidArgTypeError>(
-        JASSTR("Failed invoking function `"), funcName,
-        JASSTR("` due to invalid argument type: "), e.what());
-    return {};
-  }
-}
 
 }  // namespace jas

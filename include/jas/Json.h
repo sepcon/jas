@@ -1,14 +1,16 @@
 #pragma once
 
+#include <JsonTrait.h>
+
 #include "Exception.h"
 
-#ifdef AXZ_JSON
-#include "json_trait/axzdict/JsonTrait.h"
-#elif USE_NLOHMANN_JSON
-#include "json_trait/nlohmann/JsonTrait.h"
-#else
-#include "json_trait/json11/JsonTrait.h"
-#endif
+//#ifdef AXZ_JSON
+//#include "json_trait/axzdict/JsonTrait.h"
+//#elif USE_NLOHMANN_JSON
+//#include "json_trait/json11/JsonTrait.h"
+//#else
+//#include "json_trait/nlohmann/JsonTrait.h"
+//#endif
 
 namespace jas {
 struct JsonAdapter;

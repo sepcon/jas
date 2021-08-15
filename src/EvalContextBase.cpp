@@ -1,8 +1,8 @@
-#include "EvalContextBase.h"
+#include "jas/EvalContextBase.h"
 
-#include "CIF.h"
-#include "Exception.h"
-#include "Keywords.h"
+#include "jas/CIF.h"
+#include "jas/Exception.h"
+#include "jas/Keywords.h"
 
 namespace jas {
 

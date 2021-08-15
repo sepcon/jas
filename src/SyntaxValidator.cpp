@@ -1,11 +1,11 @@
-#include "SyntaxValidator.h"
+#include "jas/SyntaxValidator.h"
 
 #include <iomanip>
 #include <string>
 
-#include "EvaluableClasses.h"
-#include "Exception.h"
-#include "Keywords.h"
+#include "jas/EvaluableClasses.h"
+#include "jas/Exception.h"
+#include "jas/Keywords.h"
 
 namespace jas {
 

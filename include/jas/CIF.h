@@ -15,9 +15,6 @@ __mc_jas_exception(FunctionNotFoundError);
 __mc_jas_exception(FunctionInvalidArgTypeError);
 __mc_jas_exception(FunctionNotImplementedError);
 
-JsonAdapter invoke(const FunctionsMap& funcsMap, const String& funcName,
-                   const JsonAdapter& e);
-
 /// No-Input function: a mask for ignoring input
 template <class _callable>
 inline JasInvokable __ni(_callable&& f) {

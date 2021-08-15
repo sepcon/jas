@@ -1,4 +1,4 @@
-#include "Parser.h"
+#include "jas/Parser.h"
 
 #include <algorithm>
 #include <map>
@@ -8,12 +8,12 @@
 #include <string_view>
 #include <vector>
 
-#include "CIF.h"
-#include "EvalContextIF.h"
-#include "EvaluableClasses.h"
-#include "Exception.h"
-#include "Keywords.h"
-#include "Version.h"
+#include "jas/CIF.h"
+#include "jas/EvalContextIF.h"
+#include "jas/EvaluableClasses.h"
+#include "jas/Exception.h"
+#include "jas/Keywords.h"
+#include "jas/Version.h"
 
 namespace jas {
 

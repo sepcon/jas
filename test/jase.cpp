@@ -3,15 +3,15 @@
 #include <fstream>
 #include <thread>
 
-#include "CIF.h"
-#include "ConsoleLogger.h"
-#include "HistoricalEvalContext.h"
-#include "Json.h"
-#include "Keywords.h"
-#include "Parser.h"
-#include "SyntaxEvaluator.h"
-#include "SyntaxValidator.h"
-#include "Version.h"
+#include "jas/CIF.h"
+#include "jas/ConsoleLogger.h"
+#include "jas/HistoricalEvalContext.h"
+#include "jas/Json.h"
+#include "jas/Keywords.h"
+#include "jas/Parser.h"
+#include "jas/SyntaxEvaluator.h"
+#include "jas/SyntaxValidator.h"
+#include "jas/Version.h"
 
 using namespace std;
 using namespace jas;

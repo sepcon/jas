@@ -1,18 +1,13 @@
 #pragma once
-
 #include <filesystem>
-
-#include "json.hpp"
+#include <json11.hpp>
 
 namespace jas {
 
 namespace __details {
-template <class Json, typename T, typename = void>
-struct TraitImpl;
-template <class Json>
-struct TraitImpl<Json, bool> {
-  static bool matchType(const Json& j) { return j.is_boolean(); }
-};
+using namespace json11;
+template <typename T, typename = void>
+struct _TraitImpl;
 
 template <class _base_type, class _param_type>
 using _allow_if_constructible_t = std::enable_if_t<
@@ -20,53 +15,65 @@ using _allow_if_constructible_t = std::enable_if_t<
         _base_type, std::remove_cv_t<std::remove_reference_t<_param_type>>>,
     void>;
 
-template <class Json, typename T>
-struct TraitImpl<Json, T, std::enable_if_t<std::is_integral_v<T>, void>> {
-  static bool matchType(const Json& j) { return j.is_number_integer(); }
+template <>
+struct _TraitImpl<bool> {
+  static bool matchType(const Json& j) { return j.is_bool(); }
+  static bool get(const Json& j) { return j.bool_value(); }
+  static Json makeJson(bool v) { return Json(v); }
 };
 
-template <class Json, typename T>
-struct TraitImpl<Json, T, std::enable_if_t<std::is_floating_point_v<T>, void>> {
-  static bool matchType(const Json& j) { return j.is_number_float(); }
+template <typename T>
+struct _TraitImpl<T, std::enable_if_t<std::is_integral_v<T>, void>> {
+  static bool matchType(const Json& j) { return j.is_number(); }
+  static T get(const Json& j) { return static_cast<T>(j.int_value()); }
+  static Json makeJson(T v) { return static_cast<int>(v); }
 };
 
-template <class Json, class _string>
-struct TraitImpl<Json, _string, _allow_if_constructible_t<String, _string>> {
+template <typename T>
+struct _TraitImpl<T, std::enable_if_t<std::is_floating_point_v<T>, void>> {
+  static bool matchType(const Json& j) { return j.is_number(); }
+  static double get(const Json& j) { return j.number_value(); }
+  static Json makeJson(T v) { return static_cast<double>(v); }
+};
+
+template <class _string>
+struct _TraitImpl<_string, _allow_if_constructible_t<std::string, _string>> {
   static bool matchType(const Json& j) { return j.is_string(); }
+  static const std::string& get(const Json& j) { return j.string_value(); }
+  static Json makeJson(_string v) { return Json(String(std::move(v))); }
 };
 
-template <class Json>
-struct TraitImpl<Json, std::vector<Json>> {
+template <>
+struct _TraitImpl<Json::array> {
   static bool matchType(const Json& j) { return j.is_array(); }
+  static const Json::array& get(const Json& j) { return j.array_items(); }
+  static Json makeJson(Json::array v) { return Json(std::move(v)); }
 };
 
-template <class Json>
-struct TraitImpl<Json, std::map<String, Json>> {
+template <>
+struct _TraitImpl<Json::object> {
   static bool matchType(const Json& j) { return j.is_object(); }
+  static const Json::object& get(const Json& j) { return j.object_items(); }
+  static Json makeJson(Json::object v) { return Json(std::move(v)); }
 };
 
 }  // namespace __details
 struct JsonTrait {
+  using Json = json11::Json;
+  using Object = Json::object;
+  using Array = Json::array;
   using String = std::string;
-  using Json = nlohmann::json;
-  using Object = std::map<String, Json>;
-  // can be Json only but some situation we can not differentiate array vs json
-  // :D
-  using Array = std::vector<Json>;
   using Path = std::filesystem::path;
 
   static Json parse(const String& s) {
-    try {
-      return Json::parse(s);
-    } catch (const Json::exception&) {
-      return {};
-    }
+    String err;
+    return Json::parse(s, err);
   }
 
   template <class T>
   static Json makeJson(T&& v) {
-    Json j = v;
-    return j;
+    return __details::_TraitImpl<
+        std::decay_t<std::remove_reference_t<T>>>::makeJson(std::forward<T>(v));
   }
 
   template <class T>
@@ -80,19 +87,19 @@ struct JsonTrait {
 
   static auto type(const Json& j) { return j.type(); }
   static bool isNull(const Json& j) { return j.is_null(); }
-  static bool isDouble(const Json& j) { return j.is_number_float(); }
-  static bool isInt(const Json& j) { return j.is_number_integer(); }
-  static bool isBool(const Json& j) { return j.is_boolean(); }
+  static bool isDouble(const Json& j) { return j.is_number(); }
+  static bool isInt(const Json& j) { return j.is_number(); }
+  static bool isBool(const Json& j) { return j.is_bool(); }
   static bool isString(const Json& j) { return j.is_string(); }
   static bool isArray(const Json& j) { return j.is_array(); }
   static bool isObject(const Json& j) { return j.is_object(); }
   template <typename T>
   static bool isType(const Json& j) {
-    return __details::TraitImpl<Json, T>::matchType(j);
+    return __details::_TraitImpl<T>::matchType(j);
   }
 
   static bool hasKey(const Json& j, const String& key) {
-    return j.contains(key);
+    return !j[key].is_null();
   }
   static bool hasKey(const Object& j, const String& key) {
     auto it = j.find(key);
@@ -104,13 +111,16 @@ struct JsonTrait {
   static bool empty(const Json& j) { return j.is_null(); }
 
   static size_t size(const Json& j) {
-    if (j.is_object() || j.is_array()) {
-      return j.size();
+    if (j.is_object()) {
+      return j.object_items().size();
+    } else if (j.is_array()) {
+      return j.array_items().size();
     } else {
       return 0;
     }
   }
-  static size_t size(const Array& j) { return j.size(); }
+
+  static size_t size(const Array& arr) { return arr.size(); }
 
   static size_t size(const Object& o) { return o.size(); }
 
@@ -140,12 +150,8 @@ struct JsonTrait {
   static Json get(const Json* j, Path::const_iterator beg,
                   Path::const_iterator end) {
     for (; beg != end; ++beg) {
-      try {
-        j = &(j->at(beg->u8string()));
-        if (j->is_null()) {
-          return {};
-        }
-      } catch (const Json::exception&) {
+      j = &(j->operator[](beg->u8string()));
+      if (j->is_null()) {
         return {};
       }
     }
@@ -160,21 +166,14 @@ struct JsonTrait {
 
   template <class T>
   static decltype(auto) get(const Json& j) {
-    try {
-      return j.get<T>();
-    } catch (const Json::exception&) {
-      return T{};
-    }
+    return __details::_TraitImpl<T>::get(j);
   }
 
   template <class T>
   static decltype(auto) get(const Json& j, const String& key) {
-    try {
-      return j.at(key).get<T>();
-    } catch (const Json::exception&) {
-      return T{};
-    }
+    return __details::_TraitImpl<T>::get(JsonTrait::get(j, key));
   }
+
   static String dump(const Json& j) { return j.dump(); }
 };
 

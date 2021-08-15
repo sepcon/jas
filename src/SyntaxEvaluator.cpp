@@ -1,4 +1,4 @@
-#include "SyntaxEvaluator.h"
+#include "jas/SyntaxEvaluator.h"
 
 #include <algorithm>
 #include <cassert>
@@ -10,13 +10,13 @@
 #include <sstream>
 #include <string>
 
-#include "CIF.h"
-#include "EvaluableClasses.h"
-#include "Exception.h"
-#include "Keywords.h"
-#include "String.h"
-#include "SyntaxValidator.h"
-#include "jaop.h"
+#include "jas/CIF.h"
+#include "jas/EvaluableClasses.h"
+#include "jas/Exception.h"
+#include "jas/Keywords.h"
+#include "jas/String.h"
+#include "jas/SyntaxValidator.h"
+#include "jas/jaop.h"
 
 #define lambda_on_this(method, ...) [&] { return method(__VA_ARGS__); }
 
@@ -188,7 +188,7 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
       auto evaled = EvaluatedValue{evals.back()};
       throwIf<EvaluationError>(!evaled, "Evaluated to null");
       return makeEvaluatedVal(
-          _std_op{}(EvaluatedValue { evals.back() } -> get<T>()));
+          _std_op{}(EvaluatedValue { evals.back() }->get<T>()));
     }
   };
 
