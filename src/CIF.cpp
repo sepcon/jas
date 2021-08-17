@@ -231,11 +231,9 @@ static time_t _unix_timestamp(const String& strDateTime,
 static time_t unix_timestamp(const Json& input) {
   if (JsonTrait::isString(input)) {
     auto strDateTime = JsonTrait::get<String>(input);
-    __jas_ni_func_throw_invalidargs_if(
-        strDateTime.empty(),
-        "input of `unix_timestamp` must be string of "
-        "format [%Y/%m/%d %H:%M:%S]");
-    return _unix_timestamp(strDateTime, JASSTR("%Y/%m/%d %H:%M:%S"));
+    return strDateTime.empty()
+               ? -1
+               : _unix_timestamp(strDateTime, JASSTR("%Y/%m/%d %H:%M:%S"));
   } else if (JsonTrait::isArray(input)) {
     decltype(auto) arr = JsonTrait::get<JsonArray>(input);
     __jas_func_throw_invalidargs_if(
@@ -245,7 +243,6 @@ static time_t unix_timestamp(const Json& input) {
     return _unix_timestamp(JsonTrait::get<String>(arr[0]),
                            JsonTrait::get<String>(arr[1]).c_str());
   } else {
-    __jas_ni_func_throw_invalidargs("Unrecognized argument");
     return -1;
   }
 }
@@ -294,10 +291,14 @@ static bool is_odd(const Json& integer) { return !is_even(integer); }
 static bool empty(const Json& data) {
   if (JsonTrait::isArray(data) || JsonTrait::isObject(data)) {
     return JsonTrait::size(data) == 0;
-  } else {
-    __jas_func_throw_invalidargs("applies for array/object only", data);
+  } else if (JsonTrait::isNull(data)) {
+    return true;
+  } else if (JsonTrait::isString(data)) {
+    return JsonTrait::get<String>(data).size() == 0;
   }
-  return true;
+  __jas_func_throw_invalidargs("applies for array/object/string/null only",
+                               data);
+  return false;
 }
 
 static bool not_empty(const Json& data) { return !empty(data); }

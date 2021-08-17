@@ -618,41 +618,64 @@ struct ParserImpl {
   }
 
   EvaluablePtr parseEVBMap(const Json& j) {
-    if (!JsonTrait::isObject(j)) {
-      return {};
-    }
+    EvaluablePtr evb;
 
-    auto evbMap = makeEMap();
-    String id;
-    StackVariables stackVariables;
-    for (auto& [key, jvalue] : JsonTrait::get<JsonObject>(j)) {
-      if (key == keyword::id) {
-        throwIf<SyntaxError>(!JsonTrait::isString(jvalue),
-                             JASSTR("Following id specifier `"), key,
-                             JASSTR("` must be a string"));
-        evbMap->id = jsonGet<String>(jvalue);
-      } else if (!key.empty() && key[0] == prefix::variable) {
-        stackVariables.emplace(key.substr(1), parseImpl(jvalue));
-      } else {
-        evbMap->value.emplace(key, parseImpl(jvalue));
+    do {
+      if (!JsonTrait::isObject(j)) {
+        break;
       }
-    }
-    if (!stackVariables.empty()) {
-      evbMap->stackVariables =
-          make_shared<StackVariables>(std::move(stackVariables));
-    }
-    return evbMap;
+      auto evbMap = makeEMap();
+      String id;
+      StackVariables stackVariables;
+      for (auto& [key, jvalue] : JsonTrait::get<JsonObject>(j)) {
+        if (key == keyword::id) {
+          throwIf<SyntaxError>(!JsonTrait::isString(jvalue),
+                               JASSTR("Following id specifier `"), key,
+                               JASSTR("` must be a string"));
+          evbMap->id = jsonGet<String>(jvalue);
+        } else if (!key.empty() && key[0] == prefix::variable) {
+          stackVariables.emplace(key.substr(1), parseImpl(jvalue));
+        } else {
+          evbMap->value.emplace(key, parseImpl(jvalue));
+        }
+      }
+
+      if (!stackVariables.empty()) {
+        evbMap->stackVariables =
+            make_shared<StackVariables>(std::move(stackVariables));
+      } else if (evbMap->id.empty()) {
+        auto isDirectVal = std::all_of(
+            std::begin(evbMap->value), std::end(evbMap->value),
+            [](auto&& pair) {
+              return pair.second && typeid(*(pair.second)) == typeid(DirectVal);
+            });
+        if (isDirectVal) {
+          evb = makeDV(j);
+          break;
+        }
+      }
+      evb = evbMap;
+    } while (false);
+    return evb;
   }
 
   EvaluablePtr parseEVBArray(const Json& j) {
     if (!JsonTrait::isArray(j)) {
       return {};
     }
-    auto evbArray = makeEArray();
+
+    EvaluableArray::value_type arr;
     for (auto& jevb : JsonTrait::get<JsonArray>(j)) {
-      evbArray->value.push_back(parseImpl(jevb));
+      arr.push_back(parseImpl(jevb));
     }
-    return evbArray;
+
+    if (std::all_of(std::begin(arr), std::end(arr), [](auto&& e) {
+          return e && typeid(*e) == typeid(DirectVal);
+        })) {
+      return makeDV(j);
+    } else {
+      return makeEArray(move(arr));
+    }
   }
 
   EvaluablePtr parseImpl(const Json& j) {

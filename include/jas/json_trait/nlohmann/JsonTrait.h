@@ -144,7 +144,7 @@ struct JsonTrait {
   }
 
   static void add(Object& obj, String key, Json value) {
-    obj.emplace(std::move(key), std::move(value));
+    obj[std::move(key)] = std::move(value);
   }
 
   static void add(Array& arr, Json value) { arr.push_back(std::move(value)); }
