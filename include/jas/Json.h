@@ -40,6 +40,14 @@ struct JsonAdapter {
   }
 
   auto type() const { return JsonTrait::type(value); }
+  bool isNull() const { return JsonTrait::isNull(value); }
+  bool isDouble() const { return JsonTrait::isDouble(value); }
+  bool isInt() const { return JsonTrait::isInt(value); }
+  bool isBool() const { return JsonTrait::isBool(value); }
+  bool isString() const { return JsonTrait::isString(value); }
+  bool isArray() const { return JsonTrait::isArray(value); }
+  bool isObject() const { return JsonTrait::isObject(value); }
+  bool isNumber() const { return isInt() || isDouble(); }
 
   template <class T>
   T get() const {
@@ -107,11 +115,6 @@ struct JsonAdapter {
     return apply(value);
   }
 
-  bool isNumber() const {
-    return JsonTrait::isDouble(value) || JsonTrait::isInt(value);
-  }
-
-  bool isNull() const { return JsonTrait::isNull(value); }
   String dump() const { return JsonTrait::dump(value); }
 
   Json value;

@@ -1,4 +1,4 @@
-#include "jas/EvalContextBase.h"
+#include "jas/EvalContextStandard.h"
 
 #include "jas/CIF.h"
 #include "jas/Exception.h"
@@ -11,18 +11,19 @@ using std::move;
 
 static bool _isGloblProperty(const String &name);
 
-EvalContextBase::EvalContextBase(EvalContextBase *parent, String id)
+EvalContextStandard::EvalContextStandard(EvalContextStandard *parent, String id)
     : parent_(parent), id_(move(id)) {}
 
-bool EvalContextBase::functionSupported(const String &functionName) const {
+bool EvalContextStandard::functionSupported(
+    const StringView &functionName) const {
   if (parent_) {
     return parent_->functionSupported(functionName);
   }
   return false;
 }
 
-JsonAdapter EvalContextBase::invoke(const String &funcName,
-                                    const JsonAdapter &param) {
+JsonAdapter EvalContextStandard::invoke(const String &funcName,
+                                        const JsonAdapter &param) {
   if (parent_) {
     try {
       return parent_->invoke(funcName, param);
@@ -33,7 +34,7 @@ JsonAdapter EvalContextBase::invoke(const String &funcName,
   return {};
 }
 
-JAdapterPtr EvalContextBase::property(const String &name) const {
+JAdapterPtr EvalContextStandard::property(const String &name) const {
   JAdapterPtr prop;
   do {
     if (_isGloblProperty(name)) {
@@ -58,7 +59,7 @@ JAdapterPtr EvalContextBase::property(const String &name) const {
   return prop;
 }
 
-void EvalContextBase::setProperty(const String &name, JAdapterPtr val) {
+void EvalContextStandard::setProperty(const String &name, JAdapterPtr val) {
   if (_isGloblProperty(name)) {
     // This case for global property
     if (auto root = rootContext(); root == this) {
@@ -71,7 +72,17 @@ void EvalContextBase::setProperty(const String &name, JAdapterPtr val) {
   }
 }
 
-String EvalContextBase::debugInfo() const {
+JAdapterPtr *EvalContextStandard::findProperty(EvalContextStandard *ctxt,
+                                               const String &name) {
+  if (auto it = ctxt->properties_.find(name);
+      it != std::end(ctxt->properties_)) {
+    return &(it->second);
+  } else {
+    return nullptr;
+  }
+}
+
+String EvalContextStandard::debugInfo() const {
   auto inf = id_;
   OStringStream oss;
   oss << id_ << "({";
@@ -88,7 +99,7 @@ String EvalContextBase::debugInfo() const {
   return oss.str();
 }
 
-const EvalContextBase *EvalContextBase::rootContext() const {
+const EvalContextStandard *EvalContextStandard::rootContext() const {
   auto root = this;
   while (root->parent_) {
     root = root->parent_;
@@ -96,7 +107,7 @@ const EvalContextBase *EvalContextBase::rootContext() const {
   return root;
 }
 
-EvalContextBase *EvalContextBase::rootContext() {
+EvalContextStandard *EvalContextStandard::rootContext() {
   auto root = this;
   while (root->parent_) {
     root = root->parent_;

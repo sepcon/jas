@@ -14,7 +14,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   SyntaxValidatorImpl() { os_ << std::boolalpha; }
 
   bool validate(const Evaluable& e) {
-    e.accept(this);
+    _eval(&e);
     flushAllErrors();
     return errors_.empty();
   }
@@ -32,7 +32,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   }
 
   String generateSyntax(const Evaluable& e) {
-    e.accept(this);
+    _eval(&e);
     return os_.str();
   }
 
@@ -78,36 +78,44 @@ class SyntaxValidatorImpl : public EvaluatorBase {
     }
   }
 
-  void evaluate(const EvaluablePtr& e) { e->accept(this); }
-  void evaluate(const Evaluable& e) { e.accept(this); }
+  void evaluate(const EvaluablePtr& e) { _eval(e.get()); }
+  void evaluate(const Evaluable& e) { _eval(&e); }
 
   bool dumpstackVariables(const StackVariablesPtr& params) {
     if (params) {
       os_ << "set(";
       auto it = std::begin(*params);
-      os_ << "$" << it->first << '=';
-      this->evaluate(it->second.variable);
+      os_ << "$" << it->name << '=';
+      this->evaluate(it->variable);
       for (; ++it != std::end(*params);) {
         os_ << JASSTR(",");
-        os_ << "$" << it->first << '=';
-        this->evaluate(it->second.variable);
+        os_ << "$" << it->name << '=';
+        this->evaluate(it->variable);
       }
       os_ << ").then";
       return true;
     }
     return false;
   }
-  void decorateId(const Evaluable& e) {
+  bool decorateId(const Evaluable& e) {
     if (!e.id.empty()) {
       os_ << prefix::variable << e.id << JASSTR("=");
+      return true;
     }
+    return false;
   }
+
+  bool _evalStackEvb(const __UseStackEvaluable& evb) {
+    auto ret = decorateId(evb);
+    ret |= dumpstackVariables(evb.stackVariables);
+    return ret;
+  }
+
   void eval(const DirectVal& val) override {
     os_ << JsonTrait::dump(val.value);
   }
 
   void eval(const EvaluableMap& e) override {
-    dumpstackVariables(e.stackVariables);
     os_ << JASSTR("{");
     if (!e.value.empty()) {
       auto it = std::begin(e.value);
@@ -140,58 +148,76 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   }
 
   void eval(const ArithmaticalOperator& op) override {
-    decorateId(op);
-    if (op.type == ArithmeticOperatorType::bit_not ||
-        op.type == ArithmeticOperatorType::negate) {
+    if (op.type == aot::bit_not || op.type == aot::negate) {
       dumpPreUnaryOp(op);
     } else {
       dumpBinaryOp(op);
     }
+  }
+  void eval(const ArthmSelfAssignOperator& op) override {
+    os_ << JASSTR("(");
+    if (op.params.size() >= 1) {
+      if (!isType<Variable>(op.params.front())) {
+        os_ << bookMarkError(
+            strJoin("First argument of `", op.type, "` must be variable"));
+      } else {
+        os_ << prefix::variable << op.params.front()->id << op.type;
+      }
+
+      if (op.params.size() >= 2) {
+        _eval(op.params[1].get());
+        if (op.params.size() > 2) {
+          os_ << bookMarkError(
+              strJoin("Redundant argument to operator `", op.type, "`"));
+          _eval(op.params[2].get());
+          os_ << "...";
+        }
+      } else {
+        os_ << bookMarkError(
+            strJoin("Missing argument to operator `", op.type, "`"));
+      }
+    } else {
+      os_ << bookMarkError(JASSTR("Missing variable name")) << op.type
+          << bookMarkError(
+                 strJoin("Missing argument to operator `", op.type, "`"));
+    }
+    os_ << JASSTR(")");
   }
 
   void eval(const LogicalOperator& op) override {
-    decorateId(op);
-    if (op.type == LogicalOperatorType::logical_not) {
+    if (op.type == lot::logical_not) {
       dumpPreUnaryOp(op);
     } else {
       dumpBinaryOp(op);
     }
   }
-  void eval(const ComparisonOperator& op) override {
-    decorateId(op);
-    dumpBinaryOp(op, true);
-  }
+  void eval(const ComparisonOperator& op) override { dumpBinaryOp(op, true); }
 
   void eval(const ListOperation& op) override {
-    dumpstackVariables(op.stackVariables);
-    decorateId(op);
     os_ << op.type << JASSTR("(");
     if (!op.list) {
       os_ << std::quoted(JASSTR("current_list"));
     } else {
-      op.list->accept(this);
+      _eval(op.list.get());
     }
-    if (op.type != ListOperationType::transform) {
+    if (op.type != lsot::transform) {
       os_ << JASSTR(").satisfies(");
     } else {
       os_ << JASSTR(").with(");
     }
-    op.cond->accept(this);
+    _eval(op.cond.get());
 
     os_ << JASSTR(")");
   }
 
-  void eval(const Function& fnc) override {
-    dumpstackVariables(fnc.stackVariables);
-    decorateId(fnc);
-    os_ << (fnc.name.empty()
+  void eval(const FunctionInvocation& fnc) override {
+    os_ << fnc.moduleName << (fnc.moduleName.empty() ? "" : ".")
+        << (fnc.name.empty()
                 ? bookMarkError(JASSTR("Funtion name must not be empty"))
                 : fnc.name);
     os_ << JASSTR("(");
 
-    if (fnc.param) {
-      fnc.param->accept(this);
-    }
+    _eval(fnc.param.get());
     os_ << JASSTR(")");
   }
 
@@ -199,10 +225,10 @@ class SyntaxValidatorImpl : public EvaluatorBase {
     os_ << vfq.id << "[";
     if (!vfq.field_path.empty()) {
       auto it = std::begin(vfq.field_path);
-      (*it)->accept(this);
+      _eval(it->get());
       while (++it != std::end(vfq.field_path)) {
         os_ << '/';
-        (*it)->accept(this);
+        _eval(it->get());
       }
     } else {
       os_ << bookMarkError(
@@ -220,8 +246,26 @@ class SyntaxValidatorImpl : public EvaluatorBase {
     }
   }
 
+  void _eval(const Evaluable* evb) {
+    if (evb) {
+      if (evb->useStack()) {
+        auto shouldClose = false;
+        if (_evalStackEvb(static_cast<const __UseStackEvaluable&>(*evb))) {
+          shouldClose = true;
+          os_ << "(";
+        }
+        evb->accept(this);
+        if (shouldClose) {
+          os_ << ")";
+        }
+      } else {
+        evb->accept(this);
+      }
+    }
+  }
+
   String bookMarkError(const String& err) {
-    constexpr CharType error_indicator[] = JASSTR("^^");
+    constexpr CharType error_indicator[] = JASSTR("??");
     errors_.emplace_back(
         (std::streamsize)os_.tellp() + sizeof(error_indicator) / 2 + 1, err);
     return error_indicator;
@@ -229,13 +273,12 @@ class SyntaxValidatorImpl : public EvaluatorBase {
 
   template <class T>
   void dumpPreUnaryOp(const _OperatorBase<T, typename T::OperatorType>& op) {
-    dumpstackVariables(op.stackVariables);
     os_ << JASSTR("(");
     os_ << op.type;
     if (op.params.empty()) {
       os_ << bookMarkError(JASSTR("Missing paramter"));
     } else {
-      op.params[0]->accept(this);
+      _eval(op.params[0].get());
       if (op.params.size() > 1) {
         os_ << bookMarkError(JASSTR("More than required parameters count"));
       }
@@ -246,32 +289,31 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   template <class T>
   void dumpBinaryOp(const _OperatorBase<T, typename T::OperatorType>& op,
                     bool exact2 = false) {
-    dumpstackVariables(op.stackVariables);
     os_ << JASSTR("(");
     if (op.params.size() < 2) {
       if (op.params.empty()) {
         os_ << bookMarkError(JASSTR("Parameter is missing")) << op.type
             << bookMarkError(JASSTR("Parameter is missing"));
       } else {
-        op.params[0]->accept(this);
+        _eval(op.params[0].get());
         os_ << JASSTR(" ") << op.type
             << bookMarkError(JASSTR("Parameter is missing"));
       }
     } else {
       auto it = std::begin(op.params);
-      (*it)->accept(this);
+      _eval((*it).get());
       os_ << JASSTR(' ') << op.type << JASSTR(' ');
-      (*(++it))->accept(this);
+      _eval((*(++it)).get());
       if (!exact2) {
         while (++it != std::end(op.params)) {
           os_ << JASSTR(' ') << op.type << JASSTR(' ');
-          (*it)->accept(this);
+          _eval((*it).get());
         }
       } else {
         while (++it != std::end(op.params)) {
           os_ << JASSTR(' ') << op.type << JASSTR(' ')
               << bookMarkError(JASSTR("More than required parameters count"));
-          (*it)->accept(this);
+          _eval((*it).get());
         }
       }
     }

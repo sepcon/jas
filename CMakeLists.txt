@@ -11,6 +11,7 @@ set(JAS_LIBS_ALL jas)
 
 if(NOT JAS_JSON_TYPE)
     set(JAS_JSON_TYPE nlohmann)
+    add_definitions(-DJSON_USE_IMPLICIT_CONVERSIONS=0)
 elseif("${JAS_JSON_TYPE}" STREQUAL "axzdict")
     message("USE ${JAS_JSON_TYPE}")
     add_definitions(-DJAS_USE_WSTR)
@@ -39,24 +40,34 @@ add_library(jas
     include/jas/Exception.h
     include/jas/EvaluableClasses.h
     include/jas/Evaluable.h
+    include/jas/EvaluatedValue.h
     include/jas/Parser.h
     include/jas/SyntaxValidator.h
     include/jas/SyntaxEvaluator.h
     include/jas/EvalContextIF.h
-    include/jas/EvalContextBase.h
+    include/jas/EvalContextStandard.h
     include/jas/HistoricalEvalContext.h
     include/jas/Json.h
     include/jas/jaop.h
     include/jas/Keywords.h
     include/jas/CIF.h
     include/jas/ConsoleLogger.h
+    include/jas/OpTraits.h
+    include/jas/SyntaxEvaluatorImpl.h
+
+    src/Builtin.FIEDelegator.h
+    src/Builtin.ListOps.h
+    src/SyntaxEvaluatorImpl.cpp
 
     src/Parser.cpp
     src/SyntaxEvaluator.cpp
     src/SyntaxValidator.cpp
-    src/EvalContextBase.cpp
+    src/EvaluatedValue.cpp
+    src/EvalContextStandard.cpp
     src/HistoricalEvalContext.cpp
     src/CIF.cpp
+    src/FunctionModule.cpp
+    src/Builtin.ListOps.cpp
     )
 
 add_subdirectory(test)

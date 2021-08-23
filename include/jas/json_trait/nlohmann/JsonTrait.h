@@ -9,6 +9,11 @@ namespace __details {
 template <class Json, typename T, typename = void>
 struct TraitImpl;
 template <class Json>
+struct TraitImpl<Json, Json> {
+  static bool matchType(const Json& j) { return true; }
+};
+
+template <class Json>
 struct TraitImpl<Json, bool> {
   static bool matchType(const Json& j) { return j.is_boolean(); }
 };
@@ -41,7 +46,7 @@ struct TraitImpl<Json, std::vector<Json>> {
 };
 
 template <class Json>
-struct TraitImpl<Json, std::map<typename Json::string_t, Json>> {
+struct TraitImpl<Json, typename Json::object_t> {
   static bool matchType(const Json& j) { return j.is_object(); }
 };
 
@@ -49,19 +54,9 @@ struct TraitImpl<Json, std::map<typename Json::string_t, Json>> {
 struct JsonTrait {
   using Json = nlohmann::json;
   using String = nlohmann::json::string_t;
-  using Object = std::map<String, Json>;
-  // can be Json only but some situation we can not differentiate array vs json
-  // :D
-  using Array = std::vector<Json>;
+  using Object = Json;  //::object_t;
+  using Array = Json;
   using Path = std::filesystem::path;
-
-  static Json parse(const String& s) {
-    try {
-      return Json::parse(s);
-    } catch (const Json::exception&) {
-      return {};
-    }
-  }
 
   template <class T>
   static Json makeJson(T&& v) {
@@ -73,9 +68,8 @@ struct JsonTrait {
   static constexpr bool isJsonConstructible() {
     using Tp = std::remove_const_t<std::remove_reference_t<T>>;
     return std::is_integral_v<Tp> || std::is_floating_point_v<Tp> ||
-           std::is_constructible_v<String, T> ||
            std::is_constructible_v<Object, T> ||
-           std::is_constructible_v<Array, T>;
+           std::is_constructible_v<String, T>;
   }
 
   static auto type(const Json& j) { return j.type(); }
@@ -94,14 +88,17 @@ struct JsonTrait {
   static bool hasKey(const Json& j, const String& key) {
     return j.contains(key);
   }
-  static bool hasKey(const Object& j, const String& key) {
-    auto it = j.find(key);
-    return it != j.end();
-  }
+
+  //  static bool hasKey(const Object& j, const String& key) {
+  //    auto it = j.find(key);
+  //    return it != j.end();
+  //  }
 
   static bool equal(const Json& j1, const Json& j2) { return j1 == j2; }
 
   static bool empty(const Json& j) { return j.is_null(); }
+
+  //  static size_t size(const Object& o) { return o.size(); }
 
   static size_t size(const Json& j) {
     if (j.is_object() || j.is_array()) {
@@ -110,22 +107,51 @@ struct JsonTrait {
       return 0;
     }
   }
-  static size_t size(const Array& j) { return j.size(); }
 
-  static size_t size(const Object& o) { return o.size(); }
-
-  static Json get(const Json& j, const Path& path) {
-    return get(&j, std::begin(path), std::end(path));
+  static decltype(auto) get(const Json& j, size_t idx) {
+    assert(j.is_array());
+    return j[idx];
   }
+
+  //  static Json get(const Json& j, const Path& path) {
+  //    return get(&j, std::begin(path), std::end(path));
+  //  }
 
   static Json get(const Object& j, const Path& path) {
     auto beg = std::begin(path);
     try {
       decltype(auto) first = j.at(beg->u8string());
       return get(&first, ++beg, std::end(path));
-    } catch (const std::out_of_range&) {
+    } catch (const Json::exception&) {
       return {};
     }
+  }
+
+  template <typename _ElemVisitorCallback>
+  static bool iterateArray(const Json& jarr, _ElemVisitorCallback&& visitElem) {
+    auto iteratedAll = true;
+    assert(jarr.is_array());
+    for (auto it = std::begin(jarr); it != std::end(jarr); ++it) {
+      if (!visitElem(*it)) {
+        iteratedAll = false;
+        break;
+      }
+    }
+    return iteratedAll;
+  }
+
+  template <typename _KeyValueVisitorCallback>
+  static bool iterateObject(const Json& jobj,
+                            _KeyValueVisitorCallback&& visitKV) {
+    auto iteratedAll = true;
+    assert(jobj.is_object());
+    for (auto it = std::begin(jobj); it != std::end(jobj); ++it) {
+      if (!visitKV(it.key(), it.value())) {
+        iteratedAll = false;
+        break;
+      }
+    }
+    return iteratedAll;
   }
 
   static Json get(const Json* j, Path::const_iterator beg,
@@ -143,11 +169,15 @@ struct JsonTrait {
     return *j;
   }
 
-  static void add(Object& obj, String key, Json value) {
+  static void add(Json& obj, String key, Json value) {
+    assert(obj.is_object());
     obj[std::move(key)] = std::move(value);
   }
 
-  static void add(Array& arr, Json value) { arr.push_back(std::move(value)); }
+  static void add(Json& arr, Json value) {
+    assert(arr.is_array());
+    arr.push_back(std::move(value));
+  }
 
   template <class T>
   static decltype(auto) get(const Json& j) {
@@ -166,6 +196,30 @@ struct JsonTrait {
       return T{};
     }
   }
+
+  static Json object(Json::initializer_list_t in = {}) {
+    return Json::object(std::move(in));
+  }
+
+  static Json array(Json::initializer_list_t in = {}) {
+    return Json::array(std::move(in));
+  }
+
+  static Json parse(const String& s) {
+    try {
+      return Json::parse(s);
+    } catch (const Json::exception&) {
+      return {};
+    }
+  }
+  static Json parse(std::istream& s) {
+    try {
+      return Json::parse(s);
+    } catch (const Json::exception&) {
+      return {};
+    }
+  }
+
   static String dump(const Json& j) { return j.dump(); }
 };
 

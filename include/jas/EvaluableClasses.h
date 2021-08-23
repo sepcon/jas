@@ -16,23 +16,40 @@ struct DirectVal;
 struct EvaluableMap;
 struct EvaluableArray;
 struct ArithmaticalOperator;
+struct ArthmSelfAssignOperator;
 struct LogicalOperator;
 struct ComparisonOperator;
 struct ListOperation;
-struct Function;
+struct FunctionInvocation;
 struct VariableFieldQuery;
 struct Variable;
 using Evaluables = std::vector<EvaluablePtr>;
 struct VariableInfo;
-using StackVariables = std::map<String, VariableInfo>;
+using StackVariables = std::set<VariableInfo, std::less<>>;
 using StackVariablesPtr = std::shared_ptr<StackVariables>;
 
 struct VariableInfo {
   enum State { NotEvaluated, Evaluating, Evaluated };
-  VariableInfo(EvaluablePtr v) : variable(std::move(v)) {}
+  enum Type { Declaration, Update };
+  VariableInfo(String n, EvaluablePtr v, Type tp = Declaration)
+      : name(std::move(n)), variable(std::move(v)), type(tp) {}
+
+  String name;
   EvaluablePtr variable;
-  State state = NotEvaluated;
+  Type type;
+  mutable State state = NotEvaluated;
 };
+
+inline bool operator<(const VariableInfo& first, const VariableInfo& second) {
+  return (first.name < second.name) ||
+         (first.name == second.name) && (first.type < second.type);
+}
+inline bool operator<(const VariableInfo& vi, const String& name) {
+  return vi.name < name;
+}
+inline bool operator<(const String& name, const VariableInfo& vi) {
+  return name < vi.name;
+}
 
 class EvaluatorBase {
  public:
@@ -41,13 +58,28 @@ class EvaluatorBase {
   virtual void eval(const EvaluableMap&) = 0;
   virtual void eval(const EvaluableArray&) = 0;
   virtual void eval(const ArithmaticalOperator&) = 0;
+  virtual void eval(const ArthmSelfAssignOperator&) = 0;
   virtual void eval(const LogicalOperator&) = 0;
   virtual void eval(const ComparisonOperator&) = 0;
   virtual void eval(const ListOperation&) = 0;
-  virtual void eval(const Function&) = 0;
+  virtual void eval(const FunctionInvocation&) = 0;
   virtual void eval(const VariableFieldQuery&) = 0;
   virtual void eval(const Variable&) = 0;
 };
+
+template <class _Evaluable>
+bool isType(const Evaluable* evb) {
+  if (evb) {
+    auto& revb = *evb;  // avoid clang side-effect warning
+    return (typeid(revb) == typeid(_Evaluable));
+  }
+  return false;
+}
+
+template <class _Evaluable>
+bool isType(const EvaluablePtr& evb) {
+  return isType<_Evaluable>(evb.get());
+}
 
 template <class _SpecEvaluable>
 struct __BeEvaluable : public Evaluable {
@@ -57,59 +89,71 @@ struct __BeEvaluable : public Evaluable {
   }
 };
 
-template <class _SpecEvaluable>
-struct __UseStackEvaluable : public __BeEvaluable<_SpecEvaluable> {
-  using __BeEvaluable<_SpecEvaluable>::__BeEvaluable;
+struct __UseStackEvaluable : public Evaluable {
+  __UseStackEvaluable(StackVariablesPtr variables, String id = {})
+      : Evaluable(std::move(id)), stackVariables{std::move(variables)} {}
   bool useStack() const override { return true; }
-};
-
-template <class _SpecEvaluable>
-struct __NoStackEvaluable : public __BeEvaluable<_SpecEvaluable> {
-  using __BeEvaluable<_SpecEvaluable>::__BeEvaluable;
-  bool useStack() const override { return false; }
-};
-
-struct DirectVal : public __NoStackEvaluable<DirectVal>, public JsonAdapter {
-  using Base = JsonAdapter;
-  using Base::Base;
-  //  bool useStack() override { return false; }
-  //  void accept(EvaluatorBase* e) const override { e->eval(*this); }
-};
-
-struct EvaluableMap : public __UseStackEvaluable<EvaluableMap> {
-  using value_type = std::map<String, EvaluablePtr>;
-  EvaluableMap(value_type v = {}, StackVariablesPtr cp = {})
-      : value{std::move(v)}, stackVariables{std::move(cp)} {}
-  value_type value;
   StackVariablesPtr stackVariables;
 };
 
-struct EvaluableArray : public __UseStackEvaluable<EvaluableArray> {
+template <class _SpecEvaluable>
+struct __UseStackEvaluableT : public __UseStackEvaluable {
+  void accept(EvaluatorBase* e) const override {
+    e->eval(static_cast<const _SpecEvaluable&>(*this));
+  }
+  using __Base = __UseStackEvaluable;
+  using __Base::__Base;
+};
+
+struct __StacklessEvaluable : public Evaluable {
+  __StacklessEvaluable(String id = {}) : Evaluable(std::move(id)) {}
+  bool useStack() const override { return false; }
+};
+
+template <class _SpecEvaluable>
+struct __StacklessEvaluableT : public __StacklessEvaluable {
+  using __StacklessEvaluable::__StacklessEvaluable;
+  void accept(EvaluatorBase* e) const override {
+    e->eval(static_cast<const _SpecEvaluable&>(*this));
+  }
+};
+
+struct DirectVal : public __StacklessEvaluableT<DirectVal>, public JsonAdapter {
+  using Base = JsonAdapter;
+  using Base::Base;
+};
+
+struct EvaluableMap : public __UseStackEvaluableT<EvaluableMap> {
+  using __Base = __UseStackEvaluableT<EvaluableMap>;
+  using value_type = std::map<String, EvaluablePtr>;
+  EvaluableMap(value_type v = {}, StackVariablesPtr cp = {})
+      : __Base(std::move(cp)), value{std::move(v)} {}
+  value_type value;
+};
+
+struct EvaluableArray : public __StacklessEvaluableT<EvaluableArray> {
   using value_type = std::vector<EvaluablePtr>;
   EvaluableArray(value_type v = {}) : value{std::move(v)} {}
   value_type value;
 };
 
 template <class _SubType, class _Type>
-struct _OperatorBase : public __UseStackEvaluable<_SubType> {
+struct _OperatorBase : public __UseStackEvaluableT<_SubType> {
   using Param = Evaluable;
   using ParamPtr = EvaluablePtr;
   using Params = Evaluables;
   using OperatorType = _Type;
-
   _OperatorBase(String id, OperatorType t, Params p, StackVariablesPtr cp)
-      : __UseStackEvaluable<_SubType>(std::move(id)),
+      : __UseStackEvaluableT<_SubType>(std::move(cp), std::move(id)),
         type{t},
-        params{std::move(p)},
-        stackVariables{std::move(cp)} {}
+        params{std::move(p)} {}
   void add_param(ParamPtr p) { params.push_back(std::move(p)); }
 
   OperatorType type;
   Params params;
-  StackVariablesPtr stackVariables;
 };
 
-enum class ArithmeticOperatorType : int32_t {
+enum class aot : int32_t {
   plus,
   minus,
   multiplies,
@@ -123,81 +167,129 @@ enum class ArithmeticOperatorType : int32_t {
   invalid,
 };
 
-inline OStream& operator<<(OStream& os, ArithmeticOperatorType o) {
+inline OStream& operator<<(OStream& os, aot o) {
   switch (o) {
-    case ArithmeticOperatorType::plus:
+    case aot::plus:
       os << "+";
       break;
-    case ArithmeticOperatorType::minus:
+    case aot::minus:
       os << "-";
       break;
-    case ArithmeticOperatorType::multiplies:
+    case aot::multiplies:
       os << "*";
       break;
-    case ArithmeticOperatorType::divides:
+    case aot::divides:
       os << "/";
       break;
-    case ArithmeticOperatorType::modulus:
+    case aot::modulus:
       os << "%";
       break;
-    case ArithmeticOperatorType::bit_and:
+    case aot::bit_and:
       os << "&";
       break;
-    case ArithmeticOperatorType::bit_or:
+    case aot::bit_or:
       os << "|";
       break;
-    case ArithmeticOperatorType::bit_not:
+    case aot::bit_not:
       os << "~";
       break;
-    case ArithmeticOperatorType::bit_xor:
+    case aot::bit_xor:
       os << "xor";
       break;
-    case ArithmeticOperatorType::negate:
+    case aot::negate:
       os << "-";
       break;
-    case ArithmeticOperatorType::invalid:
+    case aot::invalid:
       os << "invalid";
       break;
   }
   return os;
 }
 
-struct ArithmaticalOperator
-    : public _OperatorBase<ArithmaticalOperator, ArithmeticOperatorType> {
-  using _OperatorBase<ArithmaticalOperator,
-                      ArithmeticOperatorType>::_OperatorBase;
+struct ArithmaticalOperator : public _OperatorBase<ArithmaticalOperator, aot> {
+  using _OperatorBase<ArithmaticalOperator, aot>::_OperatorBase;
 };
 
-enum class LogicalOperatorType : char {
+enum class asot : int32_t {
+  s_plus,
+  s_minus,
+  s_multiplies,
+  s_divides,
+  s_modulus,
+  s_bit_and,
+  s_bit_or,
+  s_bit_xor,
+  invalid,
+};
+
+inline OStream& operator<<(OStream& os, asot o) {
+  switch (o) {
+    case asot::s_plus:
+      os << "+=";
+      break;
+    case asot::s_minus:
+      os << "-=";
+      break;
+    case asot::s_multiplies:
+      os << "*=";
+      break;
+    case asot::s_divides:
+      os << "/=";
+      break;
+    case asot::s_modulus:
+      os << "%=";
+      break;
+    case asot::s_bit_and:
+      os << "&=";
+      break;
+    case asot::s_bit_or:
+      os << "|=";
+      break;
+    case asot::s_bit_xor:
+      os << "xor=";
+      break;
+    case asot::invalid:
+      os << "invalid";
+      break;
+  }
+  return os;
+}
+
+struct ArthmSelfAssignOperator
+    : public _OperatorBase<ArthmSelfAssignOperator, asot> {
+  using _OperatorBase<ArthmSelfAssignOperator, asot>::_OperatorBase;
+};
+
+enum class lot : char {
   logical_and,
   logical_or,
   logical_not,
   invalid,
 };
 
-inline OStream& operator<<(OStream& os, LogicalOperatorType o) {
+inline OStream& operator<<(OStream& os, lot o) {
   switch (o) {
-    case LogicalOperatorType::logical_and:
+    case lot::logical_and:
       os << "&&";
       break;
-    case LogicalOperatorType::logical_or:
+    case lot::logical_or:
       os << "||";
       break;
-    case LogicalOperatorType::logical_not:
+    case lot::logical_not:
       os << "!";
       break;
-    case LogicalOperatorType::invalid:
+    case lot::invalid:
       os << "invalid";
       break;
   }
   return os;
 }
 
-struct LogicalOperator : _OperatorBase<LogicalOperator, LogicalOperatorType> {
-  using _OperatorBase<LogicalOperator, LogicalOperatorType>::_OperatorBase;
+struct LogicalOperator : _OperatorBase<LogicalOperator, lot> {
+  using _OperatorBase<LogicalOperator, lot>::_OperatorBase;
 };
 
-enum class ComparisonOperatorType : char {
+enum class cot : char {
   eq,
   neq,
   lt,
@@ -207,40 +299,38 @@ enum class ComparisonOperatorType : char {
   invalid,
 };
 
-inline OStream& operator<<(OStream& os, ComparisonOperatorType o) {
+inline OStream& operator<<(OStream& os, cot o) {
   switch (o) {
-    case ComparisonOperatorType::eq:
+    case cot::eq:
       os << "==";
       break;
-    case ComparisonOperatorType::neq:
+    case cot::neq:
       os << "!=";
       break;
-    case ComparisonOperatorType::lt:
+    case cot::lt:
       os << "<";
       break;
-    case ComparisonOperatorType::gt:
+    case cot::gt:
       os << ">";
       break;
-    case ComparisonOperatorType::le:
+    case cot::le:
       os << "<=";
       break;
-    case ComparisonOperatorType::ge:
+    case cot::ge:
       os << ">=";
       break;
-    case ComparisonOperatorType::invalid:
+    case cot::invalid:
       os << "invalid";
       break;
   }
   return os;
 }
 
-struct ComparisonOperator
-    : _OperatorBase<ComparisonOperator, ComparisonOperatorType> {
-  using _OperatorBase<ComparisonOperator,
-                      ComparisonOperatorType>::_OperatorBase;
+struct ComparisonOperator : _OperatorBase<ComparisonOperator, cot> {
+  using _OperatorBase<ComparisonOperator, cot>::_OperatorBase;
 };
 
-enum class ListOperationType : char {
+enum class lsot : char {
   any_of,
   all_of,
   none_of,
@@ -250,71 +340,69 @@ enum class ListOperationType : char {
   invalid,
 };
 
-inline OStream& operator<<(OStream& os, ListOperationType o) {
+inline OStream& operator<<(OStream& os, lsot o) {
   switch (o) {
-    case ListOperationType::any_of:
+    case lsot::any_of:
       os << "any_of";
       break;
-    case ListOperationType::all_of:
+    case lsot::all_of:
       os << "all_of";
       break;
-    case ListOperationType::none_of:
+    case lsot::none_of:
       os << "none_of";
       break;
-    case ListOperationType::count_if:
+    case lsot::count_if:
       os << "count_if";
       break;
-    case ListOperationType::filter_if:
+    case lsot::filter_if:
       os << "filter_if";
       break;
-    case ListOperationType::transform:
+    case lsot::transform:
       os << "transform";
       break;
-    case ListOperationType::invalid:
+    case lsot::invalid:
       os << "invalid";
       break;
   }
   return os;
 }
 
-struct ListOperation : public __UseStackEvaluable<ListOperation> {
-  ListOperation(String id, ListOperationType t, EvaluablePtr c,
-                EvaluablePtr list = {}, StackVariablesPtr cp = {})
-      : __UseStackEvaluable<ListOperation>(std::move(id)),
+struct ListOperation : public __UseStackEvaluableT<ListOperation> {
+  ListOperation(String id, lsot t, EvaluablePtr c, EvaluablePtr list = {},
+                StackVariablesPtr cp = {})
+      : __UseStackEvaluableT<ListOperation>(std::move(cp), std::move(id)),
         type(t),
         list(std::move(list)),
-        cond(std::move(c)),
-        stackVariables(std::move(cp)) {}
+        cond(std::move(c)) {}
 
-  ListOperationType type;
+  lsot type;
   EvaluablePtr list;
   EvaluablePtr cond;
-  StackVariablesPtr stackVariables;
 };
 
-struct Function : public __UseStackEvaluable<Function> {
-  Function(String id, String name, EvaluablePtr param,
+struct FunctionInvocation : public __UseStackEvaluableT<FunctionInvocation> {
+  FunctionInvocation(String id, String name, EvaluablePtr param, String mdl,
            StackVariablesPtr cp = {})
-      : __UseStackEvaluable<Function>(std::move(id)),
+      : __UseStackEvaluableT<FunctionInvocation>(std::move(cp), std::move(id)),
         name(std::move(name)),
         param(std::move(param)),
-        stackVariables(std::move(cp)) {}
+        moduleName(std::move(mdl)) {}
 
   String name;
   EvaluablePtr param;
-  StackVariablesPtr stackVariables;
+  String moduleName;
 };
 
-struct VariableFieldQuery : public __UseStackEvaluable<VariableFieldQuery> {
-  using _Base = __UseStackEvaluable<VariableFieldQuery>;
+struct VariableFieldQuery : public __StacklessEvaluableT<VariableFieldQuery> {
+  using _Base = __StacklessEvaluableT<VariableFieldQuery>;
   VariableFieldQuery(String name, std::vector<EvaluablePtr> path)
       : _Base(std::move(name)), field_path(std::move(path)) {}
 
   std::vector<EvaluablePtr> field_path;
 };
 
-struct Variable : public __UseStackEvaluable<Variable> {
-  using _Base = __UseStackEvaluable<Variable>;
+struct Variable : public __StacklessEvaluableT<Variable> {
+  using _Base = __StacklessEvaluableT<Variable>;
   using _Base::_Base;
 };
 
@@ -333,30 +421,36 @@ inline auto makeDV(bool val) { return std::make_shared<DirectVal>(val); }
 inline auto makeDV(Json val) {
   return std::make_shared<DirectVal>(std::move(val));
 }
-inline auto makeOp(String id, ArithmeticOperatorType op, Evaluables params,
+inline auto makeOp(String id, aot op, Evaluables params,
                    StackVariablesPtr cp = {}) {
   return std::make_shared<ArithmaticalOperator>(
       std::move(id), op, std::move(params), std::move(cp));
 }
-inline auto makeOp(String id, LogicalOperatorType op, Evaluables params,
+inline auto makeOp(String id, asot op, Evaluables params,
+                   StackVariablesPtr cp = {}) {
+  return std::make_shared<ArthmSelfAssignOperator>(
+      std::move(id), op, std::move(params), std::move(cp));
+}
+inline auto makeOp(String id, lot op, Evaluables params,
                    StackVariablesPtr cp = {}) {
   return std::make_shared<LogicalOperator>(std::move(id), op, std::move(params),
                                            std::move(cp));
 }
-inline auto makeOp(String id, ComparisonOperatorType op, Evaluables params,
+inline auto makeOp(String id, cot op, Evaluables params,
                    StackVariablesPtr cp = {}) {
   return std::make_shared<ComparisonOperator>(std::move(id), op,
                                               std::move(params), std::move(cp));
 }
-inline auto makeOp(String id, ListOperationType op, EvaluablePtr cond,
-                   EvaluablePtr list, StackVariablesPtr cp = {}) {
+inline auto makeOp(String id, lsot op, EvaluablePtr cond, EvaluablePtr list,
+                   StackVariablesPtr cp = {}) {
   return std::make_shared<ListOperation>(std::move(id), op, std::move(cond),
                                          std::move(list), std::move(cp));
 }
 inline auto makeFnc(String id, String name, EvaluablePtr param = {},
-                    StackVariablesPtr cp = {}) {
-  return std::make_shared<Function>(std::move(id), std::move(name),
-                                    std::move(param), std::move(cp));
+                    String mdl = {}, StackVariablesPtr cp = {}) {
+  return std::make_shared<FunctionInvocation>(std::move(id), std::move(name),
+                                    std::move(param), std::move(mdl),
+                                    std::move(cp));
 }
 inline auto makeProp(String propID) {
   return std::make_shared<Variable>(std::move(propID));

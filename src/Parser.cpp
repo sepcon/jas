@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "Builtin.ListOps.h"
 #include "jas/CIF.h"
 #include "jas/EvalContextIF.h"
 #include "jas/EvaluableClasses.h"
@@ -34,7 +35,6 @@ using OptionalEvbInfo = std::optional<EvaluableInfo>;
 using Regex = std::basic_regex<CharType>;
 using RegexMatchResult = std::match_results<String::const_iterator>;
 using RegexTokenIterator = std::regex_token_iterator<String::const_iterator>;
-using StringView = std::basic_string_view<CharType>;
 
 template <typename T>
 T jsonGet(const Json& j);
@@ -47,8 +47,8 @@ template <typename T>
 T jsonGet(const Json& j, const String& key);
 static Json jsonGet(const Json& j, const String& key);
 static Json jsonGet(const Json& j, const String& key);
-static Json makeJson(const String& key, Json value);
-static std::vector<String> split(String str, const String& delim);
+static Json makeJson(const StringView& key, Json value);
+static std::vector<StringView> split(StringView str, const String& delim);
 struct ParserImpl {
   using ParsingRuleCallback = EvaluablePtr (ParserImpl::*)(const Json&);
   using KeywordParserMap = std::map<String, ParsingRuleCallback>;
@@ -56,7 +56,7 @@ struct ParserImpl {
 
   ContextPtr context_;
   std::vector<ParsingRuleCallback> parseCallbacks_ = {
-      &ParserImpl::parseNoEval,              //
+      &ParserImpl::parseNoEffectOperations,  //
       &ParserImpl::parseOperations,          //
       &ParserImpl::parseVariableFieldQuery,  //
       &ParserImpl::parseVariable,            //
@@ -65,72 +65,71 @@ struct ParserImpl {
       &ParserImpl::parseNoneKeywordVal,      //
   };
 
-  const static std::set<String>& evaluableSpecifiers() {
-    static std::set<String> specifiers = {
-        keyword::bit_and,
-        keyword::bit_not,
-        keyword::bit_or,
-        keyword::bit_xor,
-        keyword::divides,
-        keyword::minus,
-        keyword::modulus,
-        keyword::multiplies,
-        keyword::negate,
-        keyword::plus,
-        // logical operators
-        keyword::logical_and,
-        keyword::logical_not,
-        keyword::logical_or,
-        // comparison operators
-        keyword::eq,
-        keyword::ge,
-        keyword::gt,
-        keyword::le,
-        keyword::lt,
-        keyword::neq,
-        // list operations
-        keyword::all_of,
-        keyword::any_of,
-        keyword::none_of,
-        keyword::count_if,
-        keyword::filter_if,
-        keyword::transform,
+  const static std::set<StringView>& evaluableSpecifiers() {
+    using namespace keyword;
+#define __JAS_KEWORD_DECLARATION 1
+    static std::set<StringView> specifiers = {
+#include "jas/Keywords.dat"
     };
     return specifiers;
   }
 
-  static bool isVariableLike(const String& str) {
+  static bool isVariableLike(const StringView& str) {
     return !str.empty() && str[0] == prefix::variable;
   }
-  static bool isSpecifierLike(const String& str) {
+  static bool isSpecifierLike(const StringView& str) {
     return !str.empty() && str[0] == prefix::specifier;
   }
 
-  static bool isEvaluableSpecifier(const String& str) {
-    return evaluableSpecifiers().find(str) != evaluableSpecifiers().end();
+  static bool isEvaluableSpecifier(const StringView& str) {
+    return evaluableSpecifiers().find(str) != std::end(evaluableSpecifiers());
   }
 
-  static bool isNonOpSpecifier(const String& kw) {
-    static const std::set<String> specifiers = {
-        keyword::cond,
-        keyword::op,
-        keyword::list,
-        keyword::noeval,
+  static bool isNonOpSpecifier(const StringView& kw) {
+    using namespace keyword;
+    static const std::set<StringView> specifiers = {
+#define __JAS_KEWORD_DECLARATION 2
+#include "jas/Keywords.dat"
     };
-    return specifiers.find(kw) != specifiers.end();
+    return specifiers.find(kw) != std::end(specifiers);
   }
 
-  bool isSpecifier(const String& str) const {
+  bool isSpecifier(const StringView& str) const {
     return !str.empty() &&
            (isEvaluableSpecifier(str) || isNonOpSpecifier(str) ||
-            functionSupported(str.substr(1)));
+            functionSupported({}, str.substr(1)));
   }
 
-  bool functionSupported(const String& funcName) const {
-    return cif::supported(funcName) || context_->functionSupported(funcName);
+  bool isJasFunction(const StringView& module,
+                     const StringView& funcName) const {
+    return funcName == keyword::return_ + 1;
   }
 
-  void checkSupportedSpecifier(const String& str) {
+  bool isBuiltinFunction(const StringView& module,
+                         const StringView& funcName) const {
+    using SupportCheckCallback = bool (*)(const StringView& func);
+    static std::map<String, SupportCheckCallback, std::less<>> _funcCheckMap = {
+        {builtin::list::moduleName(), builtin::list::supported}};
+    auto it = _funcCheckMap.find(module);
+    return it != std::end(_funcCheckMap) && it->second(funcName);
+  }
+
+  bool functionSupported(const StringView& module,
+                         const StringView& funcName) const {
+    return isJasFunction(module, funcName) ||
+           cif::supported(module, funcName) ||
+           context_->functionSupported(funcName) ||
+           isBuiltinFunction(module, funcName);
+  }
+
+  void throwIfFunctionNotSupported(const StringView& moduleName,
+                                   const StringView& funcName) {
+    throwIf<SyntaxError>(!functionSupported(moduleName, funcName),
+                         "Unknown reference to function: `@", moduleName, ".",
+                         funcName, "` check registering module `", moduleName,
+                         "` to CIF or defined your own function");
+  }
+  void checkSupportedSpecifier(const StringView& str) {
     if (!isVariableLike(str)) {
       throwIf<SyntaxError>(
           isSpecifierLike(str) && !isSpecifier(str),
@@ -141,14 +140,32 @@ struct ParserImpl {
   }
 
   static std::optional<EvaluableInfo> extractOperationInfo(const Json& j) {
+    std::optional<EvaluableInfo> evbi;
     if (JsonTrait::isObject(j)) {
-      auto oj = jsonGet<JsonObject>(j);
-      for (auto& [key, val] : oj) {
+      JsonTrait::iterateObject(j, [&](const String& key, const Json& val) {
         if (!key.empty() && key[0] == prefix::specifier) {
-          return EvaluableInfo{key, val,
-                               jsonGet<String>(j, String{keyword::id})};
+          evbi = EvaluableInfo{key, val,
+                               JsonTrait::get<String>(j, String{keyword::id})};
+          return false;  // break;
+        } else {
+          return true;
         }
+      });
+    }
+    return evbi;
+  }
+
+  static std::optional<VariableInfo> extractStackVariables(
+      ParserImpl* parser, const String& key, const Json& evbExpr) {
+    if (key.size() > 1 && key[0] == prefix::variable) {
+      String::size_type namePos = 1;
+      VariableInfo::Type type = VariableInfo::Declaration;
+      if (key[namePos] == JASSTR('+')) {
+        ++namePos;
+        type = VariableInfo::Update;
       }
+      return VariableInfo{key.substr(namePos), parser->parseImpl(evbExpr),
+                          type};
     }
     return {};
   }
@@ -156,12 +173,15 @@ struct ParserImpl {
   static StackVariablesPtr extractStackVariables(ParserImpl* parser,
                                                  const Json& j) {
     StackVariables stackVariables;
-    for (auto& [key, val] : jsonGet<JsonObject>(j)) {
+    JsonTrait::iterateObject(j, [&](auto&& key, auto&& val) {
       if (key.size() > 1 && key[0] == prefix::variable) {
-        stackVariables.emplace(key.substr(1),
-                               VariableInfo{parser->parseImpl(val)});
+        if (auto vi = extractStackVariables(parser, key, val); vi.has_value()) {
+          stackVariables.insert(move(*vi));
+        }
       }
-    }
+      return true;  // iterate all
+    });
+
     if (!stackVariables.empty()) {
       return make_shared<StackVariables>(move(stackVariables));
     }
@@ -193,9 +213,10 @@ struct ParserImpl {
             op != _operation_type::invalid) {
           Evaluables params;
           if (JsonTrait::isArray(jevaluation)) {
-            for (auto& jparam : jsonGet<JsonArray>(jevaluation)) {
+            JsonTrait::iterateArray(jevaluation, [&](auto&& jparam) {
               params.emplace_back(parser->parseImpl(jparam));
-            }
+              return true;
+            });
           } else {
             params.emplace_back(parser->parseImpl(jevaluation));
           }
@@ -208,60 +229,71 @@ struct ParserImpl {
   };
 
   struct ArithmeticalOpParser
-      : public OperatorParserBase<ArithmeticalOpParser,
-                                  ArithmeticOperatorType> {
-    static const std::map<String, ArithmeticOperatorType>& s2op_map() {
-      static std::map<String, ArithmeticOperatorType> _ = {
-          {keyword::plus, ArithmeticOperatorType::plus},
-          {keyword::minus, ArithmeticOperatorType::minus},
-          {keyword::multiplies, ArithmeticOperatorType::multiplies},
-          {keyword::divides, ArithmeticOperatorType::divides},
-          {keyword::modulus, ArithmeticOperatorType::modulus},
-          {keyword::bit_and, ArithmeticOperatorType::bit_and},
-          {keyword::bit_or, ArithmeticOperatorType::bit_or},
-          {keyword::bit_not, ArithmeticOperatorType::bit_not},
-          {keyword::bit_xor, ArithmeticOperatorType::bit_xor},
-          {keyword::negate, ArithmeticOperatorType::negate},
-      };
-      return _;
-    }
-  };
-  struct LogicalOpParser
-      : public OperatorParserBase<LogicalOpParser, LogicalOperatorType> {
-    static const std::map<String, LogicalOperatorType>& s2op_map() {
-      static std::map<String, LogicalOperatorType> _ = {
-          {keyword::logical_and, LogicalOperatorType::logical_and},
-          {keyword::logical_or, LogicalOperatorType::logical_or},
-          {keyword::logical_not, LogicalOperatorType::logical_not},
-      };
-      return _;
-    }
-  };
-  struct ComparisonOpParser
-      : public OperatorParserBase<ComparisonOpParser, ComparisonOperatorType> {
-    static const std::map<String, ComparisonOperatorType>& s2op_map() {
-      static std::map<String, ComparisonOperatorType> _ = {
-          {keyword::eq, ComparisonOperatorType::eq},
-          {keyword::neq, ComparisonOperatorType::neq},
-          {keyword::lt, ComparisonOperatorType::lt},
-          {keyword::gt, ComparisonOperatorType::gt},
-          {keyword::le, ComparisonOperatorType::le},
-          {keyword::ge, ComparisonOperatorType::ge},
+      : public OperatorParserBase<ArithmeticalOpParser, aot> {
+    static const auto& s2op_map() {
+      static std::map<String, aot> _ = {
+          {keyword::plus, aot::plus},
+          {keyword::minus, aot::minus},
+          {keyword::multiplies, aot::multiplies},
+          {keyword::divides, aot::divides},
+          {keyword::modulus, aot::modulus},
+          {keyword::bit_and, aot::bit_and},
+          {keyword::bit_or, aot::bit_or},
+          {keyword::bit_not, aot::bit_not},
+          {keyword::bit_xor, aot::bit_xor},
+          {keyword::negate, aot::negate},
       };
       return _;
     }
   };
 
-  struct ListOpParser
-      : public OperationParserBase<ListOpParser, ListOperationType> {
-    static const std::map<String, ListOperationType>& s2op_map() {
-      static std::map<String, ListOperationType> _ = {
-          {keyword::any_of, ListOperationType::any_of},
-          {keyword::all_of, ListOperationType::all_of},
-          {keyword::none_of, ListOperationType::none_of},
-          {keyword::count_if, ListOperationType::count_if},
-          {keyword::filter_if, ListOperationType::filter_if},
-          {keyword::transform, ListOperationType::transform},
+  struct ArthmSelfAssignOperatorParser
+      : public OperatorParserBase<ArthmSelfAssignOperatorParser, asot> {
+    static const auto& s2op_map() {
+      static std::map<String, asot> _ = {
+          {keyword::s_plus, asot::s_plus},
+          {keyword::s_minus, asot::s_minus},
+          {keyword::s_multiplies, asot::s_multiplies},
+          {keyword::s_divides, asot::s_divides},
+          {keyword::s_modulus, asot::s_modulus},
+          {keyword::s_bit_and, asot::s_bit_and},
+          {keyword::s_bit_or, asot::s_bit_or},
+          {keyword::s_bit_xor, asot::s_bit_xor},
+      };
+      return _;
+    }
+  };
+  struct LogicalOpParser : public OperatorParserBase<LogicalOpParser, lot> {
+    static const auto& s2op_map() {
+      static std::map<String, lot> _ = {
+          {keyword::logical_and, lot::logical_and},
+          {keyword::logical_or, lot::logical_or},
+          {keyword::logical_not, lot::logical_not},
+      };
+      return _;
+    }
+  };
+  struct ComparisonOpParser
+      : public OperatorParserBase<ComparisonOpParser, cot> {
+    static const auto& s2op_map() {
+      static std::map<String, cot> _ = {
+          {keyword::eq, cot::eq}, {keyword::neq, cot::neq},
+          {keyword::lt, cot::lt}, {keyword::gt, cot::gt},
+          {keyword::le, cot::le}, {keyword::ge, cot::ge},
+      };
+      return _;
+    }
+  };
+
+  struct ListOpParser : public OperationParserBase<ListOpParser, lsot> {
+    static const auto& s2op_map() {
+      static std::map<String, lsot> _ = {
+          {keyword::any_of, lsot::any_of},
+          {keyword::all_of, lsot::all_of},
+          {keyword::none_of, lsot::none_of},
+          {keyword::count_if, lsot::count_if},
+          {keyword::filter_if, lsot::filter_if},
+          {keyword::transform, lsot::transform},
       };
       return _;
     }
@@ -275,7 +307,7 @@ struct ParserImpl {
         }
         auto& [sop, jevaluable, id] = evbInfo.value();
         auto op = mapToEvbType(sop);
-        if (op == ListOperationType::invalid) {
+        if (op == lsot::invalid) {
           break;
         }
 
@@ -342,7 +374,7 @@ struct ParserImpl {
         checkSupportedSpecifier(str);
 
         // Formatting String to number type:
-        // "100(%d)", "100(%f), "100(%s)"
+        // "100(%d)", "100(%f), "100(%s), "true(%b)"
         auto itCloseBracket = std::rbegin(str);
         if (*itCloseBracket != JASSTR(')')) {
           break;
@@ -368,6 +400,15 @@ struct ParserImpl {
               return makeDV(static_cast<int64_t>(std::stoll(realVal)));
             case JASSTR('s'):
               return makeDV(std::move(realVal));
+            case JASSTR('b'):
+              if (realVal == JASSTR("true")) {
+                return makeDV(true);
+              } else if (realVal == JASSTR("false")) {
+                return makeDV(false);
+              } else {
+                throw_<SyntaxError>("specifier %b cannot apply to ", realVal);
+              }
+              break;
             default:
               throw_<SyntaxError>("Unrecognized type specifier `",
                                   typespecifier, "` in [", str, "]");
@@ -385,30 +426,47 @@ struct ParserImpl {
   struct FunctionParser {
     static EvaluablePtr parse(ParserImpl* parser, const Json& expr,
                               const OptionalEvbInfo& evbInfo) {
+      auto splitModule = [](const StringView& str) {
+        StringView funcName{str.data() + 1, str.size() - 1};
+        StringView moduleName;
+        auto dotPos = funcName.find_last_of(JASSTR('.'));
+        if (dotPos != StringView::npos) {
+          moduleName = funcName.substr(0, dotPos);
+          funcName = funcName.substr(dotPos + 1);
+          throwIf<SyntaxError>(moduleName.empty(),
+                               "Module name must not empty `", str, "`");
+          throwIf<SyntaxError>(
+              funcName.empty(),
+              "FunctionInvocation name after module-separator(.) must not be empty `",
+              str, "`");
+          return std::make_pair(funcName, moduleName);
+        } else {
+          return std::make_pair(funcName, StringView{JASSTR("")});
+        }
+      };
+
       if (evbInfo) {
         auto& [sop, jevaluable, id] = evbInfo.value();
         if (isSpecifierLike(sop)) {
-          auto funcName = sop.substr(1);
-          if (parser->functionSupported(funcName)) {
-            return makeFnc(std::move(id), move(funcName),
-                           parser->parseImpl(jevaluable),
-                           extractStackVariables(parser, expr));
-          }
+          auto [funcName, moduleName] = splitModule(sop);
+          parser->throwIfFunctionNotSupported(moduleName, funcName);
+          return makeFnc(id, String(funcName), parser->parseImpl(jevaluable),
+                         String{moduleName},
+                         extractStackVariables(parser, expr));
         }
       } else if (JsonTrait::isString(expr)) {
         auto str = JsonTrait::get<String>(expr);
-        if (!str.empty()) {
-          auto funcName = str.substr(1);
-          if (parser->functionSupported(funcName)) {
-            return makeFnc({}, move(funcName), {});
-          }
+        if (!str.empty() && parser->isSpecifier(str)) {
+          auto [funcName, moduleName] = splitModule(str);
+          parser->throwIfFunctionNotSupported(moduleName, funcName);
+          return makeFnc({}, String(funcName), {}, String{moduleName});
         }
       }
       return {};
     }
   };
 
-  EvaluablePtr parseNoEval(const Json& expr) {
+  EvaluablePtr parseNoEffectOperations(const Json& expr) {
     if (JsonTrait::isObject(expr) && JsonTrait::hasKey(expr, keyword::noeval)) {
       throwIf<SyntaxError>(JsonTrait::size(expr) > 1,
                            "Json object must contain only ", "keyword `",
@@ -433,6 +491,7 @@ struct ParserImpl {
         &ParserImpl::_parseOperation<LogicalOpParser>,
         &ParserImpl::_parseOperation<ComparisonOpParser>,
         &ParserImpl::_parseOperation<ListOpParser>,
+        &ParserImpl::_parseOperation<ArthmSelfAssignOperatorParser>,
         &ParserImpl::_parseOperation<FunctionParser>,
     };
     for (auto parseFunc : operationParsers) {
@@ -501,22 +560,25 @@ struct ParserImpl {
 
   Json reconstructJAS(const Json& j) {
     if (JsonTrait::isArray(j)) {
-      JsonArray arr;
-      for (auto& val : jsonGet<JsonArray>(j)) {
+      auto arr = JsonTrait::array();
+      JsonTrait::iterateArray(j, [&](auto&& val) {
         JsonTrait::add(arr, reconstructJAS(val));
-      }
+        return true;
+      });
       return JsonTrait::makeJson(std::move(arr));
     } else if (JsonTrait::isObject(j)) {
-      JsonObject o;
-      for (auto& [key, jval] : jsonGet<JsonObject>(j)) {
-        auto _jas = constructJAS(key, reconstructJAS(jval));
+      auto reconstructedObject = JsonTrait::object();
+      JsonTrait::iterateObject(j, [&](auto&& key, auto&& val) {
+        auto _jas = constructJAS(key, reconstructJAS(val));
         if (JsonTrait::isObject(_jas)) {
-          for (auto& [_newKey, _newJval] : jsonGet<JsonObject>(_jas)) {
-            JsonTrait::add(o, _newKey, _newJval);
-          }
+          JsonTrait::iterateObject(_jas, [&](auto&& _newKey, auto&& _newJval) {
+            JsonTrait::add(reconstructedObject, _newKey, _newJval);
+            return true;
+          });
         }
-      }
-      return JsonTrait::makeJson(std::move(o));
+        return true;
+      });
+      return JsonTrait::makeJson(std::move(reconstructedObject));
     } else if (JsonTrait::isString(j)) {
       return constructJAS(jsonGet<String>(j));
     } else {
@@ -591,7 +653,7 @@ struct ParserImpl {
 
   Json constructJAS(const String& expression, const Json& jevaluable) {
     if (expression == keyword::noeval) {
-      return JsonTrait::makeJson(JsonObject{{expression, jevaluable}});
+      return JsonTrait::object({{expression, jevaluable}});
     } else if (isSpecifier(expression)) {
       return makeJson(expression, jevaluable);
     } else {
@@ -599,7 +661,6 @@ struct ParserImpl {
       if (!tokens.empty()) {
         auto isPipeline = true;
         for (auto it = tokens.begin() + 1; it != tokens.end(); ++it) {
-          checkSupportedSpecifier(*it);
           if (!isSpecifierLike(*it) && !isVariableLike(*it)) {
             isPipeline = false;
             break;
@@ -607,13 +668,11 @@ struct ParserImpl {
         }
 
         if (isPipeline) {
-          checkSupportedSpecifier(tokens.front());
           return makeJAS(tokens.begin(), tokens.end(), jevaluable);
         }
       }
     }
 
-    checkSupportedSpecifier(expression);
     return makeJson(expression, jevaluable);
   }
 
@@ -627,29 +686,28 @@ struct ParserImpl {
       auto evbMap = makeEMap();
       String id;
       StackVariables stackVariables;
-      for (auto& [key, jvalue] : JsonTrait::get<JsonObject>(j)) {
+      JsonTrait::iterateObject(j, [&](auto&& key, auto&& jvalue) {
         if (key == keyword::id) {
           throwIf<SyntaxError>(!JsonTrait::isString(jvalue),
                                JASSTR("Following id specifier `"), key,
                                JASSTR("` must be a string"));
           evbMap->id = jsonGet<String>(jvalue);
-        } else if (!key.empty() && key[0] == prefix::variable) {
-          stackVariables.emplace(key.substr(1), parseImpl(jvalue));
+        } else if (auto vi = extractStackVariables(this, key, jvalue);
+                   vi.has_value()) {
+          stackVariables.insert(move(*vi));
         } else {
           evbMap->value.emplace(key, parseImpl(jvalue));
         }
-      }
+        return true;
+      });
 
       if (!stackVariables.empty()) {
         evbMap->stackVariables =
             make_shared<StackVariables>(std::move(stackVariables));
       } else if (evbMap->id.empty()) {
-        auto isDirectVal = std::all_of(
-            std::begin(evbMap->value), std::end(evbMap->value),
-            [](auto&& pair) {
-              return pair.second && typeid(*(pair.second)) == typeid(DirectVal);
-            });
-        if (isDirectVal) {
+        if (std::all_of(
+                std::begin(evbMap->value), std::end(evbMap->value),
+                [](auto&& pair) { return isType<DirectVal>(pair.second); })) {
           evb = makeDV(j);
           break;
         }
@@ -665,13 +723,12 @@ struct ParserImpl {
     }
 
     EvaluableArray::value_type arr;
-    for (auto& jevb : JsonTrait::get<JsonArray>(j)) {
+    JsonTrait::iterateArray(j, [&](auto&& jevb) {
       arr.push_back(parseImpl(jevb));
-    }
-
-    if (std::all_of(std::begin(arr), std::end(arr), [](auto&& e) {
-          return e && typeid(*e) == typeid(DirectVal);
-        })) {
+      return true;
+    });
+    if (std::all_of(std::begin(arr), std::end(arr),
+                    [](auto&& e) { return isType<DirectVal>(e); })) {
       return makeDV(j);
     } else {
       return makeEArray(move(arr));
@@ -690,8 +747,8 @@ struct ParserImpl {
   void checkVersionCompatibility(const Json& jas) {
     auto exprVer = jsonGet<String>(jas, JASSTR("$jas.version"));
     if (!exprVer.empty()) {
-      int cmp =
-          cif::invoke(JASSTR("cmp_ver"), JsonArray{exprVer, jas::version});
+      int cmp = cif::invoke(JASSTR(""), JASSTR("cmp_ver"),
+                            JsonTrait::array({exprVer, jas::version}));
       throwIf<SyntaxError>(
           cmp > 0,
           "Given JAS syntax has higher version than current JAS parser, "
@@ -711,7 +768,7 @@ struct ParserImpl {
       return parseImpl(jas);
     }
   }
-};
+};  // namespace jas
 
 template <typename T>
 T jsonGet(const Json& j) {
@@ -726,14 +783,12 @@ static Json jsonGet(const Json& j, const String& key) {
   return JsonTrait::get(j, key);
 }
 
-static Json makeJson(const String& key, Json value) {
-  JsonObject o;
-  JsonTrait::add(o, String{key}, std::move(value));
-  return JsonTrait::makeJson(std::move(o));
+static Json makeJson(const StringView& key, Json value) {
+  return JsonTrait::object({{String{key}, std::move(value)}});
 }
 
-static std::vector<String> split(String str, const String& delim) {
-  std::vector<String> tokens;
+static std::vector<StringView> split(StringView str, const String& delim) {
+  std::vector<StringView> tokens;
   do {
     auto colonPos = str.find(delim);
     if (colonPos < str.size()) {
@@ -758,7 +813,7 @@ Json reconstructJAS(EvalContextPtr ctxt, const Json& jas) {
   return ParserImpl{ctxt}.reconstructJAS(jas);
 }
 
-const std::set<String>& evaluableSpecifiers() {
+const std::set<StringView>& evaluableSpecifiers() {
   return ParserImpl::evaluableSpecifiers();
 }
 

@@ -1,4 +1,5 @@
 #pragma once
+#include <cassert>
 #include <filesystem>
 #include <json11.hpp>
 
@@ -65,11 +66,6 @@ struct JsonTrait {
   using String = std::string;
   using Path = std::filesystem::path;
 
-  static Json parse(const String& s) {
-    String err;
-    return Json::parse(s, err);
-  }
-
   template <class T>
   static Json makeJson(T&& v) {
     return __details::_TraitImpl<
@@ -124,14 +120,10 @@ struct JsonTrait {
 
   static size_t size(const Object& o) { return o.size(); }
 
-  //  static Json get(const Json& j, const String& key) { return j[key]; }
-  //  static Json get(const Object& j, const String& key) {
-  //    if (auto it = j.find(key); it != j.end()) {
-  //      return it->second;
-  //    } else {
-  //      return Json{};
-  //    }
-  //  }
+  static decltype(auto) get(const Json& j, size_t idx) {
+    assert(j.is_array());
+    return j[idx];
+  }
 
   static Json get(const Json& j, const Path& path) {
     return get(&j, std::begin(path), std::end(path));
@@ -164,6 +156,18 @@ struct JsonTrait {
 
   static void add(Array& arr, Json value) { arr.push_back(std::move(value)); }
 
+  static void add(Json& jarr, Json value) {
+    assert(jarr.is_array());
+    auto& arr = const_cast<Array&>(jarr.array_items());
+    arr.push_back(std::move(value));
+  }
+
+  static void add(Json& j, String key, Json value) {
+    assert(j.is_object());
+    auto& arr = const_cast<Object&>(j.object_items());
+    arr[std::move(key)] = std::move(value);
+  }
+
   template <class T>
   static decltype(auto) get(const Json& j) {
     return __details::_TraitImpl<T>::get(j);
@@ -174,6 +178,51 @@ struct JsonTrait {
     return __details::_TraitImpl<T>::get(JsonTrait::get(j, key));
   }
 
+  template <typename _ElemVisitorCallback>
+  static bool iterateArray(const Json& jarr, _ElemVisitorCallback&& visitElem) {
+    auto iteratedAll = true;
+    assert(jarr.is_array());
+    for (auto& item : jarr.array_items()) {
+      if (!visitElem(item)) {
+        iteratedAll = false;
+        break;
+      }
+    }
+    return iteratedAll;
+  }
+
+  template <typename _KeyValueVisitorCallback>
+  static bool iterateObject(const Json& jobj,
+                            _KeyValueVisitorCallback&& visitKV) {
+    auto iteratedAll = true;
+    assert(jobj.is_object());
+    for (auto it = std::begin(jobj.object_items());
+         it != std::end(jobj.object_items()); ++it) {
+      if (!visitKV(it->first, it->second)) {
+        iteratedAll = false;
+        break;
+      }
+    }
+    return iteratedAll;
+  }
+
+  static Object object(Object in = {}) { return Json::object(std::move(in)); }
+
+  static Array array(Array in = {}) { return Json::array(std::move(in)); }
+
+  static Json parse(const String& s) {
+    String err;
+    return Json::parse(s, err);
+  }
+
+  static Json parse(std::istream& istream) {
+    try {
+      return parse(String{std::istreambuf_iterator<char>{istream},
+                          std::istreambuf_iterator<char>{}});
+    } catch (const std::exception&) {
+      return {};
+    }
+  }
   static String dump(const Json& j) { return j.dump(); }
 };
 

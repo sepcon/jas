@@ -9,7 +9,7 @@ false
 1622749400
 {"@lt": ["@unix_timestamp:@field:date", 0]}
 {"date":""}
-{"@exception":"EvaluationError"}
+true
 {"@len":"@field:list"}
 {"list":[1,2,3,4,5]}
 5

@@ -17,7 +17,7 @@ EvaluablePtr parse(EvalContextPtr ctxt, const Json& jas,
                    Strategy strategy = Strategy::AllowShorthand);
 Json reconstructJAS(EvalContextPtr ctxt, const Json& jas);
 
-const std::set<String> &evaluableSpecifiers();
+const std::set<StringView> &evaluableSpecifiers();
 
 };  // namespace parser
 }  // namespace jas

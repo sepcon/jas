@@ -21,6 +21,7 @@ struct Exception {
 __mc_jas_exception(SyntaxError);
 __mc_jas_exception(EvaluationError);
 __mc_jas_exception(InvalidArgument);
+__mc_jas_exception(OutOfRange);
 
 //#undef __mc_jas_exception
 

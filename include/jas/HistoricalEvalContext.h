@@ -2,13 +2,13 @@
 
 #include <map>
 
-#include "EvalContextBase.h"
+#include "EvalContextStandard.h"
 #include "String.h"
 
 namespace jas {
 
-class HistoricalEvalContext : public EvalContextBase {
-  using _Base = EvalContextBase;
+class HistoricalEvalContext : public EvalContextStandard {
+  using _Base = EvalContextStandard;
 
  public:
   using EvaluationResult = JsonObject;
@@ -30,7 +30,7 @@ class HistoricalEvalContext : public EvalContextBase {
   bool saveEvaluationResult(OStream& ostrm);
   bool loadEvaluationResult(IStream& istrm);
   std::vector<String> supportedFunctions() const override;
-  bool functionSupported(const String& functionName) const override;
+  bool functionSupported(const StringView& functionName) const override;
   JsonAdapter invoke(const String& funcName, const JsonAdapter& param) override;
 
  private:
@@ -45,6 +45,7 @@ class HistoricalEvalContext : public EvalContextBase {
   bool hasData() const;
   HistoricalEvalContext* parent() const;
   String contextPath() const;
+  String contextPath(const String& variableName) const;
 
   // context invocable methods
   /// check snapshot changed
@@ -56,8 +57,9 @@ class HistoricalEvalContext : public EvalContextBase {
   JsonAdapter field_cv(const Json& path);
   JsonAdapter hfield2arr(const Json& params);
   JsonAdapter hfield(const Json& params);
+  JsonAdapter last_eval(const Json& jVarName);
   using CtxtFuncPtr = JsonAdapter (HistoricalEvalContext::*)(const Json&);
-  using CtxtFunctionsMap = std::map<String, CtxtFuncPtr>;
+  using CtxtFunctionsMap = std::map<String, CtxtFuncPtr, std::less<>>;
 
   static CtxtFunctionsMap funcsmap_;
 };

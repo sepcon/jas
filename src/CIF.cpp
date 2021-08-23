@@ -12,6 +12,10 @@ namespace jas {
 /// context independent function
 namespace cif {
 struct Version;
+using JasUtilityFunction = std::function<JsonAdapter(const JsonAdapter&)>;
+using FunctionsMap = std::map<String, JasUtilityFunction, std::less<>>;
+using ModuleMap = std::map<String, Module, std::less<>>;
+
 template <class _transformer>
 String transform(String s, _transformer&& tr);
 static time_t current_time();
@@ -25,7 +29,7 @@ static bool lt_ver(const JsonArray& input);
 static bool gt_ver(const JsonArray& input);
 static bool ge_ver(const JsonArray& input);
 static bool le_ver(const JsonArray& input);
-static bool match_ver(const JsonArray& input);
+static bool match_ver(const Json& input);
 static bool contains(const JsonArray& input);
 static String to_string(const Json& input);
 static time_t unix_timestamp(const Json& input);
@@ -36,8 +40,26 @@ static bool is_odd(const Json& integer);
 static bool empty(const Json& data);
 static bool not_empty(const Json& data);
 static Json abs(const Json& data);
+static bool isDefaultModuleFunc(const StringView& func);
+static void defaultSupportedFunctions(std::vector<String>&);
+static JsonAdapter invokeDefaultModuleFunc(const String& funcName,
+                                           const JsonAdapter& e);
 
-static const FunctionsMap& _funcsMap() {
+/// No-Input function: a mask for ignoring input
+template <class _callable>
+inline JasUtilityFunction __ni(_callable&& f) {
+  return [f = std::move(f)](const JsonAdapter&) { return f(); };
+}
+
+static ModuleMap& _moduleMap() {
+  static ModuleMap _ = {
+      {JASSTR(""), Module{isDefaultModuleFunc, invokeDefaultModuleFunc,
+                          defaultSupportedFunctions}},
+  };
+  return _;
+}
+
+static const FunctionsMap& _defaultModule() {
   static FunctionsMap _ = {
       {JASSTR("current_time"), __ni(current_time)},
       {JASSTR("current_time_diff"), current_time_diff},
@@ -61,6 +83,7 @@ static const FunctionsMap& _funcsMap() {
       {JASSTR("empty"), empty},
       {JASSTR("not_empty"), not_empty},
       {JASSTR("abs"), abs},
+      {JASSTR("list"), abs},
   };
   return _;
 }
@@ -162,40 +185,51 @@ static bool matchVer(const Version& ver, const Version& pattern) {
 
 static bool matchVer(const Version& ver, const Json& pattern);
 
-static bool matchVer(const Version& ver, const JsonArray& listPatterns) {
-  for (auto& pattern : listPatterns) {
+static bool matchArrayVers(const Version& ver, const Json& listPatterns) {
+  assert(JsonTrait::isArray(listPatterns));
+  auto matched = false;
+  JsonTrait::iterateArray(listPatterns, [&](auto&& pattern) {
     if (matchVer(ver, pattern)) {
-      return true;
+      matched = true;
+      return false;
     }
-  }
-  return false;
+    return true;
+  });
+  return matched;
 }
 static bool matchVer(const Version& ver, const Json& pattern) {
   if (JsonTrait::isString(pattern)) {
     return matchVer(ver, Version{JsonTrait::get<String>(pattern)});
   } else if (JsonTrait::isArray(pattern)) {
-    return matchVer(ver, JsonTrait::get<JsonArray>(pattern));
+    return matchArrayVers(ver, pattern);
   } else {
     return false;
   }
 }
-static bool match_ver(const JsonArray& input) {
+static bool match_ver(const Json& input) {
   __jas_ni_func_throw_invalidargs_if(
-      input.size() < 2,
-      R"(input must satisfy: ["version", ["pattern1", ..."patternN"], or ["version", "pattern1", .... "patternN"])");
+      !JsonTrait::isArray(input) || JsonTrait::size(input) < 2,
+      R"(input must be array that satisfies: ["version", ["pattern1", ..."patternN"], or ["version", "pattern1", .... "patternN"])");
 
   __jas_func_throw_invalidargs_if(!JsonTrait::isString(input[0]),
                                   "input version must be a string", input[0]);
 
-  Version ver = JsonTrait::get<String>(input[0]);
+  Version ver = JsonTrait::get<String>(JsonTrait::get(input, 0));
 
-  size_t i = 1;
-  for (; i < JsonTrait::size(input); ++i) {
-    if (matchVer(ver, input[i])) {
+  auto matched = false;
+  auto i = -1;
+  JsonTrait::iterateArray(input, [&](auto&& item) {
+    if (++i == 0) {
       return true;
     }
-  }
-  return false;
+    if (matchVer(ver, item)) {
+      matched = true;
+      return false;
+    }
+    return true;
+  });
+
+  return matched;
 }
 
 static bool contains(const JsonArray& input) {
@@ -207,8 +241,15 @@ static bool contains(const JsonArray& input) {
     auto first = JsonTrait::get<String>(input[0]);
     return first.find(JsonTrait::get<String>(input[1])) < first.size();
   } else if (JsonTrait::isArray(input[0])) {
-    decltype(auto) arr = JsonTrait::get<JsonArray>(input[0]);
-    return std::find(std::begin(arr), std::end(arr), input[1]) != std::end(arr);
+    auto contained = false;
+    JsonTrait::iterateArray(input[0], [&](auto&& item) {
+      if (input[1] == item) {
+        contained = true;
+        return false;
+      }
+      return true;
+    });
+    return contained;
   } else if (JsonTrait::isObject(input[0])) {
     __jas_func_throw_invalidargs_if(!JsonTrait::isString(input[1]),
                                     "expect: second arg is string`", input);
@@ -248,25 +289,28 @@ static time_t unix_timestamp(const Json& input) {
 }
 
 static bool has_null_val(const Json& input) {
+  auto hasNull = false;
   if (JsonTrait::isNull(input)) {
-    return true;
-  }
-  if (JsonTrait::isObject(input)) {
-    for (auto& [key, val] : JsonTrait::get<JsonObject>(input)) {
+    hasNull = true;
+  } else if (JsonTrait::isObject(input)) {
+    JsonTrait::iterateObject(input, [&hasNull](auto&& key, auto&& val) {
       if (JsonTrait::isNull(val)) {
-        return true;
+        hasNull = true;
+        return false;
       }
-    }
-    return false;
+      return true;
+    });
+    return hasNull;
   } else if (JsonTrait::isArray(input)) {
-    for (auto& item : JsonTrait::get<JsonArray>(input)) {
+    JsonTrait::iterateArray(input, [&](auto&& item) {
       if (JsonTrait::isNull(item)) {
-        return true;
+        hasNull = true;
+        return false;
       }
-    }
-    return false;
+      return true;
+    });
   }
-  return false;
+  return hasNull;
 }
 
 static size_t len(const Json& input) {
@@ -275,7 +319,7 @@ static size_t len(const Json& input) {
   } else {
     __jas_func_throw_invalidargs_if(
         !(JsonTrait::isArray(input) || JsonTrait::isObject(input)),
-        JASSTR("input must be array or object"), input);
+        JASSTR("input must be array or object or string"), input);
     return JsonTrait::size(input);
   }
 }
@@ -296,8 +340,6 @@ static bool empty(const Json& data) {
   } else if (JsonTrait::isString(data)) {
     return JsonTrait::get<String>(data).size() == 0;
   }
-  __jas_func_throw_invalidargs("applies for array/object/string/null only",
-                               data);
   return false;
 }
 
@@ -313,12 +355,23 @@ static Json abs(const Json& data) {
   }
 }
 
-static JsonAdapter invoke(const FunctionsMap& funcsMap, const String& funcName,
-                          const JsonAdapter& e) {
-  auto it = funcsMap.find(funcName);
-  throwIf<FunctionNotFoundError>(!(it != funcsMap.end()),
+static bool isDefaultModuleFunc(const StringView& func) {
+  return _defaultModule().find(func) != std::end(_defaultModule());
+}
+
+static void defaultSupportedFunctions(std::vector<String>& funcs) {
+  std::transform(begin(_defaultModule()), std::end(_defaultModule()),
+                 std::back_insert_iterator(funcs),
+                 [](auto&& p) { return p.first; });
+}
+
+static JsonAdapter invokeDefaultModuleFunc(const String& funcName,
+                                           const JsonAdapter& e) {
+  auto it = _defaultModule().find(funcName);
+  throwIf<FunctionNotFoundError>(!(it != _defaultModule().end()),
                                  JASSTR("Unkown function `"), funcName,
                                  JASSTR("`!"));
+  JsonAdapter out;
   try {
     return it->second(e);
   } catch (const JsonAdapter::TypeError& e) {
@@ -329,22 +382,34 @@ static JsonAdapter invoke(const FunctionsMap& funcsMap, const String& funcName,
   }
 }
 
-JsonAdapter invoke(const String& funcName, const JsonAdapter& e) {
-  return invoke(_funcsMap(), funcName, e);
+JsonAdapter invoke(const String& module, const String& funcName,
+                   const JsonAdapter& e) {
+  auto it = _moduleMap().find(module);
+  if (it != std::end(_moduleMap())) {
+    return it->second.invoke(funcName, e);
+  } else {
+    return {};
+  }
 }
 
-bool supported(const String& funcName) {
-  return _funcsMap().find(funcName) != _funcsMap().end();
+bool supported(const StringView& moduleName, const StringView& funcName) {
+  auto itModule = _moduleMap().find(moduleName);
+  return itModule != _moduleMap().end() && itModule->second.supported(funcName);
 }
 
 std::vector<String> supportedFunctions() {
-  std::vector<String> funcs;
-  std::transform(begin(_funcsMap()), std::end(_funcsMap()),
-                 std::back_insert_iterator(funcs),
-                 [](auto&& p) { return p.first; });
-  return funcs;
+  std::vector<String> out;
+  for (auto& [name, mdl] : _moduleMap()) {
+    mdl.listFuncs(out);
+  }
+  return out;
+}
+
+void registerModule(const String& moduleName, Module mdl) {
+  auto& _mdl = _moduleMap()[moduleName];
+  throwIf<Exception>(!!_mdl.invoke, "Module already registered");
+  _mdl = std::move(mdl);
 }
 
 }  // namespace cif
-
 }  // namespace jas

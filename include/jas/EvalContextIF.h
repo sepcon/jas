@@ -14,10 +14,10 @@ class EvalContextIF {
  public:
   virtual ~EvalContextIF() = default;
   virtual std::vector<String> supportedFunctions() const = 0;
-  virtual bool functionSupported(const String& functionName) const = 0;
+  virtual bool functionSupported(const StringView& functionName) const = 0;
   virtual JsonAdapter invoke(const String& name, const JsonAdapter& param) = 0;
-  virtual JAdapterPtr property(const String& refid) const = 0;
-  virtual void setProperty(const String& path, JAdapterPtr val) = 0;
+  virtual JAdapterPtr property(const String& name) const = 0;
+  virtual void setProperty(const String& name, JAdapterPtr val) = 0;
   virtual EvalContextPtr subContext(const String& ctxtID,
                                     const JsonAdapter& input) = 0;
   virtual String debugInfo() const = 0;

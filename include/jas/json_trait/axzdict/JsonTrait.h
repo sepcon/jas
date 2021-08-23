@@ -1,4 +1,5 @@
 #pragma once
+#include <cassert>
 #include <filesystem>
 
 #include "axz_error_codes.h"
@@ -80,12 +81,6 @@ struct JsonTrait {
   using Array = axz_dict_array;
   using String = axz_wstring;
   using Path = std::filesystem::path;
-
-  static Json parse(const String& s) {
-    Json j;
-    AxzJson::deserialize(s, j);
-    return j;
-  }
 
   template <class T>
   static Json makeJson(T v) {
@@ -177,6 +172,16 @@ struct JsonTrait {
 
   static void add(Array& arr, Json value) { arr.push_back(std::move(value)); }
 
+  static void add(Json& j, Json value) {
+    assert(j.isArray());
+    j.add(std::move(value));
+  }
+
+  static void add(Json& j, const String& key, Json value) {
+    assert(j.isObject());
+    j.add(key, std::move(value));
+  }
+
   template <class T>
   static decltype(auto) get(const Json& j) {
     if (__details::_TraitImpl<T>::matchType(j)) {
@@ -191,6 +196,58 @@ struct JsonTrait {
       return __details::_TraitImpl<T>::get(JsonTrait::get(j, key));
     } catch (const std::exception&) {
       return __details::_TraitImpl<T>::defaultValue();
+    }
+  }
+
+  static decltype(auto) get(const Json& j, size_t idx) {
+    assert(j.isArray());
+    return j[idx];
+  }
+
+  template <typename _ElemVisitorCallback>
+  static bool iterateArray(const Json& jarr, _ElemVisitorCallback&& visitElem) {
+    auto iteratedAll = true;
+    assert(jarr.isArray());
+    for (auto& item : jarr.arrayVal()) {
+      if (!visitElem(item)) {
+        iteratedAll = false;
+        break;
+      }
+    }
+    return iteratedAll;
+  }
+
+  template <typename _KeyValueVisitorCallback>
+  static bool iterateObject(const Json& jobj,
+                            _KeyValueVisitorCallback&& visitKV) {
+    auto iteratedAll = true;
+    assert(jobj.isObject());
+    for (auto it = std::begin(jobj.objectVal());
+         it != std::end(jobj.objectVal()); ++it) {
+      if (!visitKV(it->first, it->second)) {
+        iteratedAll = false;
+        break;
+      }
+    }
+    return iteratedAll;
+  }
+
+  static Object object(Object in = {}) { return in; }
+
+  static Array array(Array in = {}) { return in; }
+
+  static Json parse(const String& s) {
+    Json j;
+    AxzJson::deserialize(s, j);
+    return j;
+  }
+
+  static Json parse(std::basic_istream<String::value_type>& istream) {
+    try {
+      using IStreamBufIterator = std::istreambuf_iterator<String::value_type>;
+      return parse(String{IStreamBufIterator{istream}, IStreamBufIterator{}});
+    } catch (const std::exception&) {
+      return {};
     }
   }
 

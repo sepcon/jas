@@ -1,0 +1,118 @@
+// clang-format off
+#if __JAS_KEWORD_DECLARATION == 0
+#   include "String.h"
+
+#   define JAS_NAMESPACE_BEGIN(the_name_space) \
+    namespace jas {                           \
+    namespace the_name_space {
+
+#   define JAS_NAMESPACE_END(the_name_space) \
+    }                                       \
+    }
+
+#define JAS_KEYWORD_DECL(keyword) \
+  inline const auto keyword = JASSTR("@") JASSTR(#keyword);
+#define JAS_KEYWORD_DECL_1_1(kwvar, kwname) \
+  inline const auto kwvar = JASSTR("@") JASSTR(#kwname);
+
+#define JAS_KEYWORD_PREFIX_DECL_1_1(var, ch) inline const auto var = JASSTR(ch);
+
+#   define JAS_EVB_KEYWORD_DCL JAS_KEYWORD_DECL
+#   define JAS_EVB_KEYWORD_DCL_1_1 JAS_KEYWORD_DECL_1_1
+
+#   define JAS_PLH_KEYWORD_DCL JAS_KEYWORD_DECL
+#   define JAS_PLH_KEYWORD_DCL_1_1 JAS_KEYWORD_DECL_1_1
+
+#else
+#     define JAS_NAMESPACE_BEGIN(...)
+#     define JAS_NAMESPACE_END(...)
+#     define JAS_KEYWORD_PREFIX_DECL_1_1(...)
+
+#  if __JAS_KEWORD_DECLARATION == 1
+
+
+#     define JAS_EVB_KEYWORD_DCL(keyword) keyword,
+#     define JAS_EVB_KEYWORD_DCL_1_1(keyword, kwname) keyword,
+
+#     define JAS_PLH_KEYWORD_DCL(...)
+#     define JAS_PLH_KEYWORD_DCL_1_1(...)
+
+#  elif __JAS_KEWORD_DECLARATION == 2
+
+#     define JAS_EVB_KEYWORD_DCL(...)
+#     define JAS_EVB_KEYWORD_DCL_1_1(...)
+
+#     define JAS_PLH_KEYWORD_DCL(keyword) keyword,
+#     define JAS_PLH_KEYWORD_DCL_1_1(keyword, kwname) keyword,
+#   endif
+#endif
+
+
+JAS_NAMESPACE_BEGIN(keyword)
+  // arithmetical operators
+  JAS_EVB_KEYWORD_DCL(bit_and)
+  JAS_EVB_KEYWORD_DCL(bit_not)
+  JAS_EVB_KEYWORD_DCL(bit_or)
+  JAS_EVB_KEYWORD_DCL(bit_xor)
+  JAS_EVB_KEYWORD_DCL(divides)
+  JAS_EVB_KEYWORD_DCL(minus)
+  JAS_EVB_KEYWORD_DCL(modulus)
+  JAS_EVB_KEYWORD_DCL(multiplies)
+  JAS_EVB_KEYWORD_DCL(negate)
+  JAS_EVB_KEYWORD_DCL(plus)
+
+  // logical operators
+  JAS_EVB_KEYWORD_DCL_1_1(logical_and, and)
+  JAS_EVB_KEYWORD_DCL_1_1(logical_not, not )
+  JAS_EVB_KEYWORD_DCL_1_1(logical_or, or)
+
+  // self-op operators
+  JAS_EVB_KEYWORD_DCL(s_bit_and)
+  JAS_EVB_KEYWORD_DCL(s_bit_or)
+  JAS_EVB_KEYWORD_DCL(s_bit_xor)
+  JAS_EVB_KEYWORD_DCL(s_divides)
+  JAS_EVB_KEYWORD_DCL(s_minus)
+  JAS_EVB_KEYWORD_DCL(s_modulus)
+  JAS_EVB_KEYWORD_DCL(s_multiplies)
+  JAS_EVB_KEYWORD_DCL(s_plus)
+
+  // comparison operators
+  JAS_EVB_KEYWORD_DCL(eq)
+  JAS_EVB_KEYWORD_DCL(ge)
+  JAS_EVB_KEYWORD_DCL(gt)
+  JAS_EVB_KEYWORD_DCL(le)
+  JAS_EVB_KEYWORD_DCL(lt)
+  JAS_EVB_KEYWORD_DCL(neq)
+  // list operations
+  JAS_EVB_KEYWORD_DCL(all_of)
+  JAS_EVB_KEYWORD_DCL(any_of)
+  JAS_EVB_KEYWORD_DCL(none_of)
+  JAS_EVB_KEYWORD_DCL(count_if)
+  JAS_EVB_KEYWORD_DCL(filter_if)
+  JAS_EVB_KEYWORD_DCL(transform)
+  // return operation
+  JAS_EVB_KEYWORD_DCL_1_1(return_, return)
+
+  // place holder
+  JAS_PLH_KEYWORD_DCL(cond)
+  JAS_PLH_KEYWORD_DCL(op)
+  JAS_PLH_KEYWORD_DCL(list)
+  JAS_PLH_KEYWORD_DCL(noeval)
+  JAS_KEYWORD_PREFIX_DECL_1_1(id, "$")
+
+JAS_NAMESPACE_END(keyword)
+
+JAS_NAMESPACE_BEGIN(prefix)
+  JAS_KEYWORD_PREFIX_DECL_1_1(variable, '$')
+  JAS_KEYWORD_PREFIX_DECL_1_1(specifier, '@')
+JAS_NAMESPACE_END(prefix)
+// clang-format on
+
+#undef JAS_NAMESPACE_BEGIN
+#undef JAS_NAMESPACE_END
+#undef JAS_EVB_KEYWORD_DCL
+#undef JAS_EVB_KEYWORD_DCL_1_1
+#undef JAS_PLH_KEYWORD_DCL
+#undef JAS_PLH_KEYWORD_DCL_1_1
+#undef JAS_KEYWORD_PREFIX_DECL_1_1
+#undef __JAS_KEWORD_DECLARATION

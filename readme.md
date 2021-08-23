@@ -174,7 +174,7 @@
 		
 		- **ContextProperty:** is similar variable in function and has accessing scope. it is designed to store constant value 
 		or evaluated result from other Evaluable for accessing later by other Evaluables.
-			- ContextProperty(Property) can be declared inside the definition of an Operation/Function/EvaluableMap
+			- ContextProperty(Property) can be declared inside the definition of an Operation/FunctionInvocation/EvaluableMap
 			- Property has its own scope, and can only be accessed from its/its-sub scopes(Context)
 			- If Property is not found in current context(scope), it will be looked up in parent context until root context
 			- Property can be declared to be visible in global context for accessing later by Evaluables in all other contexts
@@ -195,7 +195,7 @@
 	> }```
 	
 		
-- **Function**:
+- **FunctionInvocation**:
 	- **Description:**  invokes a function that supported by default or by `current_context`
 	- **Syntax:**
 		> ```

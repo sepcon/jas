@@ -357,7 +357,7 @@ each has a context to specify the variables for computation.</p>
                   <strong>ContextProperty:</strong> is similar variable in function and has accessing scope. it is designed to store constant value
 or evaluated result from other Evaluable for using later.</p>
                 <ul>
-                  <li>Can be declare inside the definition of an Operation/Function/EvaluableMap</li>
+                  <li>Can be declare inside the definition of an Operation/FunctionInvocation/EvaluableMap</li>
                   <li>ContextProperty(Property) has its own scope, and can only be accessed from its/its-sub scopes(Context)</li>
                   <li>If Property is not found in current context(scope), it will be looked up in parent context until root context</li>
                   <li>Property can be declared to be visible in global context for accessing later by Evaluables in all other contexts</li>
@@ -389,7 +389,7 @@ or evaluated result from other Evaluable for using later.</p>
       </li>
       <li>
         <p>
-          <strong>Function</strong>:</p>
+          <strong>FunctionInvocation</strong>:</p>
         <ul>
           <li>
             <p>

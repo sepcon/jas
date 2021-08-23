@@ -55,7 +55,6 @@ void exitIf(bool condition, const Msgs&... msg) {
 void showSupportedKeywords() {
   CloggerSection showTitleSct{JASE_TITLE};
   HistoricalEvalContext ctxt;
-  auto functions = ctxt.supportedFunctions();
   auto displaySequence = [](const auto& sequence, const auto& prefix) {
     size_t maxLen = 0;
     int i = 0;
@@ -72,19 +71,28 @@ void showSupportedKeywords() {
         __clogger << "\n";
       }
     }
+    // For odd list.count, we don't have last new line, then put one here
+    if (i % 4 != 0) {
+      __clogger << "\n";
+    }
   };
 
-  if (!functions.empty()) {
-    clogger() << "\nFunction keyword list:";
-    displaySequence(functions, prefix::specifier);
-  }
-
-  auto& evbSpecifiers = parser::evaluableSpecifiers();
-  if (!evbSpecifiers.empty()) {
-    clogger() << "\nEvaluable keyword list:";
+  if (auto& evbSpecifiers = parser::evaluableSpecifiers();
+      !evbSpecifiers.empty()) {
+    clogger() << "\nEvaluable keywords:";
     displaySequence(evbSpecifiers, "");
   }
 
+  if (auto historicalContextFncs = ctxt.supportedFunctions();
+      !historicalContextFncs.empty()) {
+    clogger() << "\nHistoricalContext's Functions:";
+    displaySequence(historicalContextFncs, prefix::specifier);
+  }
+
+  if (auto cifFuncs = cif::supportedFunctions(); !cifFuncs.empty()) {
+    clogger() << "\nContext Independent Functions:";
+    displaySequence(cifFuncs, prefix::specifier);
+  }
   exit(0);
 }
 

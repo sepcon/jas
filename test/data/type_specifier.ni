@@ -10,3 +10,11 @@
 [{"@plus":[1,2]}]
 "@noeval:@current_time"
 "@current_time"
+"@return:true(%b)"
+true
+"@return:false(%b)"
+false
+"@return:falsee(%b)"
+{"@exception": "SyntaxError"}
+{"$value:@plus":[1,2], "@return": "$value"}
+3

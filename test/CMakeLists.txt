@@ -11,3 +11,4 @@ endfunction(jas_add_executable)
 
 jas_add_executable(jase)
 jas_add_executable(jas_test)
+jas_add_executable(misc_test)

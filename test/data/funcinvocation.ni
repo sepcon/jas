@@ -7,7 +7,7 @@ true
 "@unix_timestamp:2021/06/04 02:43:20"
 1622749400
 {"@lt":["@unix_timestamp", 0]}
-{"@exception": "EvaluationError"}
+true
 {"@contains":["Hello", "ell"]}
 true
 {"@contains":["Hello", "bell"]}
