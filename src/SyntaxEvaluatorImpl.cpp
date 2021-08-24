@@ -7,14 +7,13 @@
 #include <numeric>
 #include <sstream>
 
-#include "jas/CIF.h"
 #include "jas/EvaluableClasses.h"
 #include "jas/Exception.h"
 #include "jas/Keywords.h"
+#include "jas/ModuleManager.h"
 #include "jas/OpTraits.h"
 #include "jas/String.h"
 #include "jas/SyntaxValidator.h"
-#include "jas/jaop.h"
 
 #define lambda_on_this(method, ...) [&] { return method(__VA_ARGS__); }
 
@@ -22,7 +21,7 @@ namespace jas {
 
 using std::make_shared;
 using std::move;
-using EvaluatedValues = std::vector<EvaluatedValue>;
+using Vars = std::vector<Var>;
 
 template <class _Exception>
 struct StackUnwin : public _Exception {
@@ -30,61 +29,45 @@ struct StackUnwin : public _Exception {
   using _Base::_Base;
 };
 
-static Json toJson(const JAdapterPtr& jap) {
-  if (jap) {
-    return *jap;
-  } else {
-    return {};
-  }
-}
-
-EvaluatedValue makeEvaluatedVal(JsonAdapter value) {
-  return make_shared<JsonAdapter>(move(value));
-}
-
 template <class _Callable>
-EvaluatedValue filter_if(const JsonArray& list, _Callable&& cond) {
-  auto filtered = JsonTrait::array();
+Var filter_if(const Vars& list, _Callable&& cond) {
+  auto filtered = Var::list();
   for (auto& item : list) {
     if (cond(item)) {
-      JsonTrait::add(filtered, item);
+      filtered.add(item);
     }
   }
-  return makeEvaluatedVal(move(filtered));
+  return filtered;
 }
 
 template <class _Callable>
-EvaluatedValue transform(const JsonArray& list, _Callable&& transf) {
-  auto transformed = JsonTrait::array();
+Var transform(const Vars& list, _Callable&& transf) {
+  auto transformed = Var::list();
   for (auto& item : list) {
-    JsonTrait::add(transformed, toJson(transf(item)));
+    transformed.add(transf(item));
   }
-  return makeEvaluatedVal(move(transformed));
+  return transformed;
 }
 
-void setContextProperty(const EvalContextPtr& ctxt, const String& propName,
-                        const EvaluatedValue& val) {
-  if (val.use_count() == 1) {
-    ctxt->setProperty(propName, val);
-  } else {
-    ctxt->setProperty(propName, makeEvaluatedVal(*val));
-  }
+static Var setVariable(const EvalContextPtr& ctxt, const String& propName,
+                       const Var& val) {
+  return ctxt->setVariable(propName, Var::ref(val));
 }
 
 template <class _StdOperator, class _Params>
-static JsonAdapter binaryOperationAccumulate(const _Params& evaluatedVals) {
+static Var binaryOperationAccumulate(const _Params& evaluatedVals) {
   throwIf<EvaluationError>(evaluatedVals.size() < 2,
                            "Size must be greator than 2");
 
   auto op = _StdOperator{};
   auto it = std::begin(evaluatedVals);
-  EvaluatedValue e = *it;
-  throwIf<EvaluationError>(!e, "Evaluated to null");
-  JsonAdapter result = *e;
+  Var e = *it;
+  throwIf<EvaluationError>(e.isNull(), "Evaluated to null");
+  auto result = e;
   while (++it != std::end(evaluatedVals)) {
     e = *it;
-    throwIf<EvaluationError>(!e, "Evaluated to null");
-    result = op(result, *e);
+    throwIf<EvaluationError>(e.isNull(), "Evaluated to null");
+    result = op(result, e);
   }
   return result;
 }
@@ -118,7 +101,7 @@ static JsonAdapter binaryOperationAccumulate(const _Params& evaluatedVals) {
 #define __MC_BASIC_OPERATION_EVAL_START(op) try {
 #define __MC_BASIC_OPERATION_EVAL_END(op)                           \
   }                                                                 \
-  catch (const DirectVal::TypeError& e) {                           \
+  catch (const TypeError& e) {                                      \
     evalThrow<EvaluationError>(                                     \
         "Evaluation Error: ", SyntaxValidator{}.generateSyntax(op), \
         " -> parameters of operation `", op.type,                   \
@@ -140,16 +123,16 @@ void SyntaxEvaluatorImpl::evalThrow(_Msg&&... msg) {
   throw_<StackUnwin<_Exception>>(generateBackTrace(strJoin(msg...)));
 }
 
-EvaluatedValue SyntaxEvaluatorImpl::evaluate(const Evaluable& e,
-                                             EvalContextPtr rootContext) {
+Var SyntaxEvaluatorImpl::evaluate(const Evaluable& e,
+                                  EvalContextPtr rootContext) {
   SyntaxValidator validator;
-  EvaluatedValue evaluated;
+  Var evaluated;
   if (validator.validate(e)) {
     if (!stack_.empty()) {
       stack_.clear();
     }
     // push root context to stack as main entry
-    stack_.emplace_back(move(rootContext), EvaluatedValue{}, &e);
+    stack_.emplace_back(move(rootContext), Var{}, &e);
     e.accept(this);
     evaluated = stackTakeReturnedVal();
   } else {
@@ -158,8 +141,8 @@ EvaluatedValue SyntaxEvaluatorImpl::evaluate(const Evaluable& e,
   return evaluated;
 }
 
-EvaluatedValue SyntaxEvaluatorImpl::evaluate(const EvaluablePtr& e,
-                                             EvalContextPtr rootContext) {
+Var SyntaxEvaluatorImpl::evaluate(const EvaluablePtr& e,
+                                  EvalContextPtr rootContext) {
   if (e) {
     return evaluate(*e, move(rootContext));
   } else {
@@ -171,6 +154,9 @@ void SyntaxEvaluatorImpl::setDebugInfoCallback(DebugOutputCallback cb) {
   dbCallback_ = move(cb);
 }
 
+SyntaxEvaluatorImpl::SyntaxEvaluatorImpl(ModuleManager* moduleMgr)
+    : moduleMgr_(moduleMgr) {}
+
 SyntaxEvaluatorImpl::~SyntaxEvaluatorImpl() {
   while (!stack_.empty()) {
     stack_.pop_back();
@@ -178,31 +164,31 @@ SyntaxEvaluatorImpl::~SyntaxEvaluatorImpl() {
 }
 
 void SyntaxEvaluatorImpl::eval(const DirectVal& v) {
-  stackReturn(static_cast<const JsonAdapter&>(v));
+  stackReturn(Var::ref(v.value));
 }
 
-void SyntaxEvaluatorImpl::eval(const EvaluableMap& v) {
-  auto evaluated = JsonTrait::object();
+void SyntaxEvaluatorImpl::eval(const EvaluableDict& v) {
+  auto evaluated = Var::dict();
   if (!v.id.empty()) {
-    JsonTrait::add(evaluated, String{keyword::id}, v.id);
+    evaluated.add(String{keyword::id}, v.id);
   }
 
   evaluateVariables(v.stackVariables);
 
   for (auto& [key, val] : v.value) {
-    evaluated.emplace(key, toJson(_evalRet(val.get(), key)));
+    evaluated.add(key, _evalRet(val.get(), key));
   }
-  stackReturn(makeEvaluatedVal(evaluated), v);
+  stackReturn(move(evaluated), v);
 }
 
-void SyntaxEvaluatorImpl::eval(const EvaluableArray& v) {
-  auto evaluated = JsonTrait::array();
+void SyntaxEvaluatorImpl::eval(const EvaluableList& v) {
+  auto evaluated = Var::list();
   auto itemIdx = 0;
   for (auto& val : v.value) {
     try {
-      evaluated.emplace_back(toJson(_evalRet(val.get(), strJoin(itemIdx))));
+      evaluated.add(_evalRet(val.get(), strJoin(itemIdx)));
     } catch (const EvaluationError&) {
-      evaluated.emplace_back(Json{});
+      evaluated.add(Var{});
     }
   }
   stackReturn(move(evaluated));
@@ -230,23 +216,19 @@ void SyntaxEvaluatorImpl::eval(const ArithmaticalOperator& op) {
       case aot::modulus:
         return applyMultiBinOp<aot, aot::modulus, std::modulus>(evaluatedVals);
       case aot::divides:
-        return makeEvaluatedVal(
-            binaryOperationAccumulate<std::divides<>>(evaluatedVals));
+        return binaryOperationAccumulate<std::divides<>>(evaluatedVals);
       case aot::minus:
-        return makeEvaluatedVal(
-            binaryOperationAccumulate<std::minus<>>(evaluatedVals));
+        return binaryOperationAccumulate<std::minus<>>(evaluatedVals);
       case aot::multiplies:
-        return makeEvaluatedVal(
-            binaryOperationAccumulate<std::multiplies<>>(evaluatedVals));
+        return binaryOperationAccumulate<std::multiplies<>>(evaluatedVals);
       case aot::negate:
         return applyUnaryOp<aot, aot::negate, std::negate>(evaluatedVals);
       case aot::plus:
-        return makeEvaluatedVal(
-            binaryOperationAccumulate<std::plus<>>(evaluatedVals));
+        return binaryOperationAccumulate<std::plus<>>(evaluatedVals);
       default:
-        return EvaluatedValue{};
+        return Var{};
     }
-    __MC_BASIC_OPERATION_EVAL_END_RETURN(op, EvaluatedValue{})
+    __MC_BASIC_OPERATION_EVAL_END_RETURN(op, Var{})
   });
 
   stackReturn(move(e), op);
@@ -258,40 +240,40 @@ void SyntaxEvaluatorImpl::eval(const ArthmSelfAssignOperator& op) {
   evaluateVariables(op.stackVariables);
   auto var = op.params.front();
   auto val = _evalRet(var.get());
-  evalThrowIf<EvaluationError>(!val, "Variable ", var->id,
+  evalThrowIf<EvaluationError>(val.isNull(), "Variable ", var->id,
                                " has not initialized yet");
   auto paramVal = _evalRet(op.params.back().get());
-  evalThrowIf<EvaluationError>(!paramVal, "Parameter to operator `", op.type,
-                               "` evaluated to null");
+  evalThrowIf<EvaluationError>(paramVal.isNull(), "Parameter to operator `",
+                               op.type, "` evaluated to null");
 
   switch (op.type) {
     case asot::s_plus:
-      *val = (*val + *paramVal);
+      val.assign(val + paramVal);
       break;
     case asot::s_minus:
-      *val = (*val - *paramVal);
+      val.assign(val - paramVal);
       break;
     case asot::s_multiplies:
-      *val = (*val * *paramVal);
+      val.assign(val * paramVal);
       break;
     case asot::s_divides:
-      *val = (*val / *paramVal);
+      val.assign(val / paramVal);
       break;
     case asot::s_modulus: {
-      *val = *applySingleBinOp<asot, asot::s_modulus, std::modulus>(
-          EvaluatedValues{val, paramVal});
+      val.assign(applySingleBinOp<asot, asot::s_modulus, std::modulus>(
+          Vars{val, paramVal}));
     } break;
     case asot::s_bit_and: {
-      *val = *applySingleBinOp<asot, asot::s_bit_and, std::bit_and>(
-          EvaluatedValues{val, paramVal});
+      val.assign(applySingleBinOp<asot, asot::s_bit_and, std::bit_and>(
+          Vars{val, paramVal}));
     } break;
     case asot::s_bit_or: {
-      *val = *applySingleBinOp<asot, asot::s_bit_or, std::bit_or>(
-          EvaluatedValues{val, paramVal});
+      val.assign(applySingleBinOp<asot, asot::s_bit_or, std::bit_or>(
+          Vars{val, paramVal}));
     } break;
     case asot::s_bit_xor: {
-      *val = *applySingleBinOp<asot, asot::s_bit_xor, std::bit_xor>(
-          EvaluatedValues{val, paramVal});
+      val.assign(applySingleBinOp<asot, asot::s_bit_xor, std::bit_xor>(
+          Vars{val, paramVal}));
     } break;
     default:
       throw_<EvaluationError>("Unexpected operator");
@@ -319,9 +301,9 @@ void SyntaxEvaluatorImpl::eval(const LogicalOperator& op) {
         return applyUnaryOp<lot, lot::logical_not, std::logical_not>(
             evaluatedVals);
       default:
-        return EvaluatedValue{};
+        return Var{};
     }
-    __MC_BASIC_OPERATION_EVAL_END_RETURN(op, EvaluatedValue{})
+    __MC_BASIC_OPERATION_EVAL_END_RETURN(op, Var{})
   });
   stackReturn(move(e), op);
 }
@@ -331,14 +313,9 @@ void SyntaxEvaluatorImpl::eval(const ComparisonOperator& op) {
   auto e = evaluateOperator(op, [&op, this](auto&& evaluated) {
     __MC_BASIC_OPERATION_EVAL_START(op)
     auto __applyOp = [&](auto&& stdop) {
-      EvaluatedValue first = evaluated.front();
-      EvaluatedValue second = evaluated.back();
-      throwIf<EvaluationError>(
-          !first || !second, JASSTR("Compare with null: ("),
-          (first ? first->dump() : JASSTR("null")), JASSTR(", "),
-          (second ? second->dump() : JASSTR("null")), JASSTR(")"));
-
-      return makeEvaluatedVal(stdop(*first, *second));
+      Var first = evaluated.front();
+      Var second = evaluated.back();
+      return stdop(first, second);
     };
 
     switch (op.type) {
@@ -355,16 +332,16 @@ void SyntaxEvaluatorImpl::eval(const ComparisonOperator& op) {
       case cot::neq:
         return __applyOp(std::not_equal_to{});
       default:
-        return EvaluatedValue{};
+        return false;
     }
-    __MC_BASIC_OPERATION_EVAL_END_RETURN(op, EvaluatedValue{})
+    __MC_BASIC_OPERATION_EVAL_END_RETURN(op, false)
   });
   stackReturn(move(e), op);
 }
 
-void SyntaxEvaluatorImpl::eval(const ListOperation& op) {
-  EvaluatedValue finalEvaled;
-  EvaluatedValue vlist;
+void SyntaxEvaluatorImpl::eval(const ListAlgorithm& op) {
+  Var finalEvaled;
+  Var vlist;
 
   evaluateVariables(op.stackVariables);
 
@@ -373,42 +350,37 @@ void SyntaxEvaluatorImpl::eval(const ListOperation& op) {
   }
 
   evalThrowIf<EvaluationError>(
-      !vlist || !JsonTrait::isArray(vlist->value),
+      !vlist.isList(),
       "`@list` input of list operation was not evaluated to array type");
 
-  auto list = vlist->get<JsonArray>();
+  auto& list = vlist.asList();
   int itemIdx = 0;
-  auto eval_impl = [this, &itemIdx, &op](const Json& data) {
+  auto eval_impl = [this, &itemIdx, &op](const Var& data) {
     auto evaluated = _evalRet(op.cond.get(), strJoin(itemIdx++), data);
     evalThrowIf<EvaluationError>(
-        !evaluated->isType<bool>(),
-        "Invalid param type > operation: ", syntaxOf(op),
-        "` > expected: `boolean` > real_val: `", evaluated->dump(), "`");
-    return evaluated->get<bool>();
+        !evaluated.isBool(), "Invalid param type > operation: ", syntaxOf(op),
+        "` > expected: `boolean` > real_val: `", evaluated.dump(), "`");
+    return evaluated.getValue<bool>();
   };
 
   switch (op.type) {
     case lsot::any_of:
-      finalEvaled = makeEvaluatedVal(
-          std::any_of(std::begin(list), std::end(list), eval_impl));
+      finalEvaled = std::any_of(std::begin(list), std::end(list), eval_impl);
       break;
     case lsot::all_of:
-      finalEvaled = makeEvaluatedVal(
-          std::all_of(std::begin(list), std::end(list), eval_impl));
+      finalEvaled = std::all_of(std::begin(list), std::end(list), eval_impl);
       break;
     case lsot::none_of:
-      finalEvaled = makeEvaluatedVal(
-          std::none_of(std::begin(list), std::end(list), eval_impl));
+      finalEvaled = std::none_of(std::begin(list), std::end(list), eval_impl);
       break;
     case lsot::count_if:
-      finalEvaled = makeEvaluatedVal(
-          std::count_if(std::begin(list), std::end(list), eval_impl));
+      finalEvaled = std::count_if(std::begin(list), std::end(list), eval_impl);
       break;
     case lsot::filter_if:
       finalEvaled = filter_if(list, eval_impl);
       break;
     case lsot::transform:
-      finalEvaled = transform(list, [this, &itemIdx, &op](const Json& data) {
+      finalEvaled = transform(list, [this, &itemIdx, &op](const Var& data) {
         return _evalRet(op.cond.get(), strJoin(itemIdx++), data);
       });
       break;
@@ -418,45 +390,49 @@ void SyntaxEvaluatorImpl::eval(const ListOperation& op) {
   stackReturn(move(finalEvaled), op);
 }
 
-void SyntaxEvaluatorImpl::eval(const FunctionInvocation& func) {
-  evalThrowIf<SyntaxError>(func.name.empty(),
-                           "FunctionInvocation name must not be empty");
-  JsonAdapter funcRet;
-  evaluateVariables(func.stackVariables);
+template <class _FI>
+Var _evalFIParam(SyntaxEvaluatorImpl* evaluator,
+                 const FunctionInvocationBase<_FI>& fi) {
+  assert(!fi.name.empty());
+  evaluator->evaluateVariables(fi.stackVariables);
+  return evaluator->_evalRet(fi.param.get());
+}
+void SyntaxEvaluatorImpl::eval(const ContextFI& fi) {
+  stackReturn(stackTopContext()->invoke(fi.name, _evalFIParam(this, fi)));
+}
 
-  if (func.name == StringView{keyword::return_ + 1}) {
-    stackReturn(_evalRet(func.param.get()));
+void SyntaxEvaluatorImpl::eval(const EvaluatorFI& fi) {
+  if (fi.name == StringView{keyword::return_ + 1}) {
+    stackReturn(_evalFIParam(this, fi));
   } else {
-    auto evaledParam = _evalRet(func.param.get());
-    try {
-      funcRet = cif::invoke(func.moduleName, func.name,
-                            evaledParam ? *evaledParam : JsonAdapter{});
-    } catch (const FunctionNotFoundError&) {
-      funcRet = stackTopContext()->invoke(
-          func.name, evaledParam ? *evaledParam : JsonAdapter{});
-    }
-    stackReturn(makeEvaluatedVal(move(funcRet)), func);
+    assert(false);
   }
+}
+
+void SyntaxEvaluatorImpl::eval(const ModuleFI& fi) {
+  assert(fi.module);
+  auto evaluatedParam = _evalFIParam(this, fi);
+  auto funcRet = fi.module->eval(fi.name, evaluatedParam, this);
+  stackReturn(move(funcRet), fi);
 }
 
 void SyntaxEvaluatorImpl::eval(const VariableFieldQuery& query) {
   auto& varname = query.id;
   auto var = _queryOrEvalVariable(varname);
   do {
-    if (!var || var->isNull()) {
-      stackReturn(EvaluatedValue{});
+    if (var.isNull()) {
+      stackReturn(Var{});
       break;
     }
 
-    JsonTrait::Path path;
+    const Var* pevaluated = &var;
     for (auto& evbField : query.field_path) {
       auto field = _evalRet(evbField.get());
-      evalThrowIf<EvaluationError>(!field->isType<String>(),
+      evalThrowIf<EvaluationError>(!field.isString(),
                                    "Cannot evaluated to a valid path");
-      path /= field->get<String>();
+      pevaluated = &(pevaluated->at(field.getString()));
     }
-
-    stackReturn(JsonTrait::get(var->value, path));
+    stackReturn(*pevaluated);
   } while (false);
 }
 
@@ -464,10 +440,11 @@ void SyntaxEvaluatorImpl::eval(const Variable& prop) {
   stackReturn(_queryOrEvalVariable(prop.id));
 }
 
-EvaluatedValue SyntaxEvaluatorImpl::_queryOrEvalVariable(
-    const String& variableName) {
-  EvaluatedValue val = stackTopContext()->property(variableName);
-  if (!val) {
+Var SyntaxEvaluatorImpl::_queryOrEvalVariable(const String& variableName) {
+  Var val;
+  try {
+    val = stackTopContext()->variable(variableName);
+  } catch (const EvaluationError&) {
     // loop through stack to find the not evaluated property
     for (auto it = std::rbegin(stack_); it != std::rend(stack_); ++it) {
       if (!it->variables) {
@@ -483,30 +460,28 @@ EvaluatedValue SyntaxEvaluatorImpl::_queryOrEvalVariable(
         break;
       }
     }
-    evalThrowIf<EvaluationError>(!val, "variable not found: $", variableName);
   }
   return val;
 }
 
 void SyntaxEvaluatorImpl::_evalOnStack(const Evaluable* e, String ctxtID,
-                                       JsonAdapter ctxtData) {
+                                       Var ctxtData) {
   assert(e);
   __MC_STACK_START(move(ctxtID), e, std::move(ctxtData));
   e->accept(this);
   __MC_STACK_END
 }
 
-EvaluatedValue jas::SyntaxEvaluatorImpl::_evalRet(const Evaluable* e,
-                                                  String ctxtID,
-                                                  JsonAdapter ctxtData) {
-  EvaluatedValue evaluated;
+Var SyntaxEvaluatorImpl::_evalRet(const Evaluable* e, String ctxtID,
+                                  Var ctxtData) {
+  Var evaluated;
   if (e) {
     if (e->useStack()) {
       _evalOnStack(e, move(ctxtID), move(ctxtData));
       evaluated = stackTakeReturnedVal();
     } else {
       e->accept(this);
-      swap(evaluated, stackReturnedVal());
+      std::swap(evaluated, stackReturnedVal());
       if (!isType<DirectVal>(e)) {
         stackDebugReturnVal(evaluated, e);
       }
@@ -533,50 +508,56 @@ String SyntaxEvaluatorImpl::stackDump() const {
 }
 
 void SyntaxEvaluatorImpl::stackPush(String ctxtID, const Evaluable* evb,
-                                    JsonAdapter contextData) {
-  stack_.push_back(
-      EvaluationFrame{stackTopContext()->subContext(ctxtID, move(contextData)),
-                      EvaluatedValue{}, evb});
+                                    Var contextData) {
+  stack_.push_back(EvaluationFrame{
+      stackTopContext()->subContext(ctxtID, move(contextData)), Var{}, evb});
 }
 
-void SyntaxEvaluatorImpl::stackReturn(JsonAdapter val) {
-  stackReturn(makeEvaluatedVal(move(val)));
-}
-
-void SyntaxEvaluatorImpl::stackReturn(EvaluatedValue&& val) {
+void SyntaxEvaluatorImpl::stackReturn(Var val) {
   stackTopFrame().returnedValue = move(val);
 }
 
-void SyntaxEvaluatorImpl::stackReturn(EvaluatedValue&& val,
-                                      const Evaluable& ev) {
+void SyntaxEvaluatorImpl::stackReturn(Var val, const Evaluable& ev) {
   if (!ev.id.empty()) {
-    setContextProperty(stackTopContext(), ev.id, val);
+    setVariable(stackTopContext(), ev.id, val);
   }
   stackReturn(move(val));
 }
 
-void jas::SyntaxEvaluatorImpl::stackDebugReturnVal(const EvaluatedValue& e,
-                                                   const Evaluable* evb) {
+void SyntaxEvaluatorImpl::stackDebugReturnVal(const Var& e,
+                                              const Evaluable* evb) {
   if (dbCallback_ && evb) {
-    auto syntax = syntaxOf(*evb);
+    auto addUseCount = [&](auto&& syntax) {
+#ifndef __JAS_DEEP_DEBUG
+      if (isType<Variable>(evb)) {
+        return strJoin(syntax, std::hex, "  (", e.address(),
+                       " - ref:", e.useCount(), ")");
+      } else {
+        return strJoin(syntax, std::hex, "  (", e.address(), ")");
+      }
+#else
+      return std::move(syntax);
+#endif
+    };
+    auto syntax = addUseCount(syntaxOf(*evb));
+
     if (syntax.size() > 60) {
       dbCallback_(strJoin(std::setw(3), ++evalCount_, JASSTR(". "), syntax,
-                          JASSTR("\n\t\t`--> "),
-                          (e ? e->dump() : JASSTR("null"))));
+                          "\n", std::setw(60), JASSTR("\t\t`--> "), ": ",
+                          e.dump()));
     } else {
       dbCallback_(strJoin(std::setw(3), ++evalCount_, JASSTR(". "), std::left,
-                          std::setw(60), syntax, JASSTR(": "),
-                          (e ? e->dump() : JASSTR("null"))));
+                          std::setw(60), syntax, JASSTR(": "), e.dump()));
     }
   }
 }
 
-EvaluatedValue& SyntaxEvaluatorImpl::stackReturnedVal() {
+Var& SyntaxEvaluatorImpl::stackReturnedVal() {
   return stackTopFrame().returnedValue;
 }
 
-EvaluatedValue jas::SyntaxEvaluatorImpl::stackTakeReturnedVal() {
-  EvaluatedValue e = move(stackReturnedVal());
+Var SyntaxEvaluatorImpl::stackTakeReturnedVal() {
+  Var e = move(stackReturnedVal());
   stackDebugReturnVal(e, stackTopFrame().evb);
   stackPop();
   return e;
@@ -592,27 +573,23 @@ const EvalContextPtr& SyntaxEvaluatorImpl::stackTopContext() {
   return stack_.back().context;
 }
 
-const jas::EvalContextPtr& jas::SyntaxEvaluatorImpl::stackRootContext() {
+const EvalContextPtr& SyntaxEvaluatorImpl::stackRootContext() {
   return stack_.front().context;
 }
 
-jas::EvaluatedValue jas::SyntaxEvaluatorImpl::evaluateSingleVar(
-    const EvalContextPtr& ctxt, const String& varname, const VariableInfo& vi) {
+Var SyntaxEvaluatorImpl::evaluateSingleVar(const EvalContextPtr& ctxt,
+                                           const String& varname,
+                                           const VariableInfo& vi) {
   vi.state = VariableInfo::Evaluating;
   auto val = _evalRet(vi.variable.get());
-  if (vi.type == VariableInfo::Declaration) {
-    setContextProperty(ctxt, varname, val);
-  } else if (auto varVal = ctxt->property(varname); varVal) {
-    if (val.use_count() == 1) {
-      using namespace std;
-      swap(*val, *varVal);
-      val = varVal;
-    } else {
-      *varVal = *val;
-    }
-  }
   vi.state = VariableInfo::Evaluated;
-  return val;
+  if (vi.type == VariableInfo::Declaration) {
+    return setVariable(ctxt, varname, move(val));
+  } else {
+    auto var = ctxt->variable(varname);
+    var.assign(move(val));
+    return var;
+  }
 }
 
 void SyntaxEvaluatorImpl::evaluateVariables(
@@ -645,28 +622,37 @@ String SyntaxEvaluatorImpl::syntaxOf(const Evaluable& e) {
 template <class _optype_t, _optype_t _optype_val,
           template <class> class _std_op,
           template <class, class, class> class _applier_impl, class _Params>
-EvaluatedValue SyntaxEvaluatorImpl::applyOp(const _Params& frame) {
-  EvaluatedValue firstEvaluated = frame.front();
-  return firstEvaluated->visitValue(
+Var SyntaxEvaluatorImpl::applyOp(const _Params& frame) {
+  Var firstEvaluated = frame.front();
+  return firstEvaluated.visitValue(
       [&frame, this](auto&& val) {
-        using ValType =
-            std::remove_const_t<std::remove_reference_t<decltype(val)>>;
-        if constexpr (op_traits::operationSupported<ValType>(_optype_val)) {
+        auto _throwNotApplicableErr = [&] {
+          evalThrow<EvaluationError>("Operator ", _optype_val,
+                                     " is not applicable on type");
+        };
+        using ValType = std::decay_t<decltype(val)>;
+        if constexpr (!op_traits::operationSupported<ValType>(_optype_val)) {
+          if constexpr (!std::is_floating_point_v<ValType>) {
+            _throwNotApplicableErr();
+          }
+          if constexpr (op_traits::operationSupported<Var::Int>(_optype_val)) {
+            return _applier_impl<Var::Int, _std_op<Var::Int>, _Params>::apply(
+                frame);
+          } else {
+            _throwNotApplicableErr();
+          }
+        } else {
           return _applier_impl<ValType, _std_op<ValType>, _Params>::apply(
               frame);
-        } else {
-          evalThrow<EvaluationError>("Operator ", _optype_val,
-                                     " is not applicable on type `",
-                                     typeid(val).name(), "`");
         }
-        return EvaluatedValue{};
+        return Var{};
       },
       true);
 }
 
 template <class _Operation, class _Callable>
-EvaluatedValue SyntaxEvaluatorImpl::evaluateOperator(const _Operation& op,
-                                                     _Callable&& eval_func) {
+Var SyntaxEvaluatorImpl::evaluateOperator(const _Operation& op,
+                                          _Callable&& eval_func) {
   evaluateVariables(op.stackVariables);
   // evaluate all params
   EvaluatedOnReadValues inlevals;
@@ -703,26 +689,26 @@ void SyntaxEvaluatorImpl::makeSureSingleBinaryOp(
 }
 
 template <class T, T _optype, template <class> class _std_op, class _Params>
-EvaluatedValue SyntaxEvaluatorImpl::applySingleBinOp(const _Params& ievals) {
+Var SyntaxEvaluatorImpl::applySingleBinOp(const _Params& ievals) {
   return applyOp<T, _optype, _std_op, ApplySingleBinOpImpl>(ievals);
 }
 
 template <class T, T _optype, template <class> class _std_op, class _Params>
-EvaluatedValue SyntaxEvaluatorImpl::applyMultiBinOp(const _Params& ievals) {
+Var SyntaxEvaluatorImpl::applyMultiBinOp(const _Params& ievals) {
   return applyOp<T, _optype, _std_op, ApplyMutiBinOpImpl>(ievals);
 }
 
 template <class T, T _optype, template <class> class _std_op, class _Params>
-EvaluatedValue SyntaxEvaluatorImpl::applyUnaryOp(const _Params& ievals) {
+Var SyntaxEvaluatorImpl::applyUnaryOp(const _Params& ievals) {
   return applyOp<T, _optype, _std_op, ApplyUnaryOpImpl>(ievals);
 }
 template <class _Params>
-EvaluatedValue SyntaxEvaluatorImpl::applyLogicalAndOp(const _Params& ievals) {
+Var SyntaxEvaluatorImpl::applyLogicalAndOp(const _Params& ievals) {
   return applyOp<lot, lot::logical_and, std::logical_and,
                  ApplyLogicalAndOpImpl>(ievals);
 }
 template <class _Params>
-EvaluatedValue SyntaxEvaluatorImpl::applyLogicalOrOp(const _Params& ievals) {
+Var SyntaxEvaluatorImpl::applyLogicalOrOp(const _Params& ievals) {
   return applyOp<lot, lot::logical_or, std::logical_or, ApplyLogicalOrOpImpl>(
       ievals);
 }

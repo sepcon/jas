@@ -1,23 +1,49 @@
 #pragma once
 
 #include "Json.h"
+#include "jas/Var.h"
 
 namespace jas {
+
 class SyntaxEvaluatorImpl;
-class FunctionInvocation;
 class FunctionModuleIF;
+using FunctionNameList = std::vector<String>;
 using FunctionModulePtr = std::shared_ptr<FunctionModuleIF>;
-using JsonAdapterPtr = std::shared_ptr<JsonAdapter>;
 
 class FunctionModuleIF {
  public:
   virtual ~FunctionModuleIF() = default;
-  virtual JsonAdapterPtr eval(const FunctionInvocation& fi,
-                              SyntaxEvaluatorImpl*) = 0;
+  virtual String moduleName() const = 0;
+  virtual Var eval(const String& funcName, Var& evaluatedParam,
+                      SyntaxEvaluatorImpl*) = 0;
+  virtual bool has(const StringView& funcName) const = 0;
+  virtual void enumerateFuncs(FunctionNameList& funcName) const = 0;
 };
 
-bool registerModule(const String& moduleName, FunctionModulePtr mdl);
-bool unregisterModule(const String& moduleName);
-JsonAdapterPtr eval(const FunctionInvocation& fi, SyntaxEvaluatorImpl*);
-
+__mc_jas_exception(FunctionNotFoundError);
 }  // namespace jas
+
+#define __module_creating_prototype(module_name) \
+  namespace jas {                                \
+  namespace mdl {                                \
+  namespace module_name {                        \
+  FunctionModulePtr getModule();                 \
+  }                                              \
+  }                                              \
+  }
+
+/// No input function throw
+#define __jas_ni_func_throw_invalidargs(errmsg) \
+  throw_<InvalidArgument>("function `", __func__, "`: ", errmsg)
+
+/// Having input function throw
+#define __jas_func_throw_invalidargs(errmsg, jparam)             \
+  throw_<InvalidArgument>("function `", __func__, "`: ", errmsg, \
+                          ", given: ", jparam.dump())
+
+#define __jas_ni_func_throw_invalidargs_if(cond, errmsg) \
+  throwIf<InvalidArgument>(cond, "function `", __func__, "`: ", errmsg)
+
+#define __jas_func_throw_invalidargs_if(cond, errmsg, jparam)           \
+  throwIf<InvalidArgument>(cond, "function `", __func__, "`: ", errmsg, \
+                           ", given: ", jparam.dump())

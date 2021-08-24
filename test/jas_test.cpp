@@ -1,14 +1,15 @@
 
+#include "jas/JASFacade.h"
+
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 
 #include "jas/ConsoleLogger.h"
 #include "jas/HistoricalEvalContext.h"
+#include "jas/JASFacade.h"
 #include "jas/Json.h"
-#include "jas/Parser.h"
-#include "jas/SyntaxEvaluator.h"
-#include "jas/SyntaxValidator.h"
+#include "jas/Translator.h"
 
 namespace jas {
 namespace fs = std::filesystem;
@@ -24,18 +25,24 @@ using Ifstream = std::basic_ifstream<CharType>;
 using test_cases = std::vector<test_case>;
 __mc_jas_exception(data_error);
 
+static JASFacade& jas_facade();
 static int run_all_tests(const fs::path& testcase_dir);
 static test_cases load_no_input_test_cases(const fs::path& data_file);
 static test_cases load_has_input_test_cases(const fs::path& data_file);
 static void run_test_case(const test_case& tc);
 static void failed_test_case(const test_case& tc, const String& syntax,
-                             const Json* observed, const String& reason = {});
+                             const Var& observed, const String& reason = {});
 static void success_test_case(const test_case& tc);
 static Json parse_test_case(const String& data);
 static EvalContextPtr make_eval_ctxt(Json data);
 
 static int total_passes = 0;
 static int total_failed = 0;
+
+JASFacade& jas_facade() {
+  static JASFacade _;
+  return _;
+}
 
 static int run_all_tests(const fs::path& testcase_dir) {
   CLoggerTimerSection allTestSection(JASSTR("All test"));
@@ -129,21 +136,13 @@ static test_cases load_has_input_test_cases(const fs::path& data_file) {
   return tcs;
 }
 static void run_test_case(const test_case& tc) {
-  static auto parsingCtxt = std::make_shared<HistoricalEvalContext>();
   try {
-    auto evaluable = parser::parse(parsingCtxt, tc.rule);
-    if (evaluable) {
-      auto syntax = SyntaxValidator{}.generateSyntax(*evaluable);
-
-      auto evaluated = SyntaxEvaluator{}.evaluate(
-          evaluable, make_eval_ctxt(tc.context_data));
-      if (JsonTrait::equal(tc.expected, evaluated->value)) {
-        success_test_case(tc);
-      } else {
-        failed_test_case(tc, syntax, &evaluated->value);
-      }
+    auto evaluated =
+        jas_facade().evaluate(tc.rule, make_eval_ctxt(tc.context_data));
+    if (JsonTrait::equal(tc.expected, evaluated.toJson())) {
+      success_test_case(tc);
     } else {
-      failed_test_case(tc, JASSTR(""), nullptr, JASSTR("Failed to parse data"));
+      failed_test_case(tc, jas_facade().getTransformedSyntax(), evaluated);
     }
   } catch (const Exception& e) {
     if (auto exceptionName =
@@ -153,19 +152,19 @@ static void run_test_case(const test_case& tc) {
         success_test_case(tc);
       }
     } else {
-      failed_test_case(tc, JsonTrait::dump(tc.rule), nullptr, e.what());
+      failed_test_case(tc, JsonTrait::dump(tc.rule), {}, e.what());
     }
   }
 }
 
 static void failed_test_case(const test_case& tc, const String& syntax,
-                             const Json* observed, const String& reason) {
+                             const Var& observed, const String& reason) {
   ++total_failed;
   clogger() << JASSTR("TC[") << tc.data_line_number
             << JASSTR("][FAILED] - syntax: ") << syntax;
-  if (observed) {
+  if (!observed.isNull()) {
     clogger() << JASSTR(" - [expected]: ") << JsonTrait::dump(tc.expected)
-              << JASSTR(" - [observed]: ") << JsonTrait::dump(*observed);
+              << JASSTR(" - [observed]: ") << observed.dump();
   } else {
     clogger() << " - [reason]: \n" << reason;
   }

@@ -6,21 +6,25 @@
 
 #include "Evaluable.h"
 #include "Exception.h"
+#include "FunctionModule.h"
 #include "Json.h"
 #include "String.h"
+#include "Var.h"
 
 namespace jas {
 
-struct Evaluable;
+class Evaluable;
 struct DirectVal;
-struct EvaluableMap;
-struct EvaluableArray;
+struct EvaluableDict;
+struct EvaluableList;
 struct ArithmaticalOperator;
 struct ArthmSelfAssignOperator;
 struct LogicalOperator;
 struct ComparisonOperator;
-struct ListOperation;
-struct FunctionInvocation;
+struct ListAlgorithm;
+struct ModuleFI;
+struct ContextFI;
+struct EvaluatorFI;
 struct VariableFieldQuery;
 struct Variable;
 using Evaluables = std::vector<EvaluablePtr>;
@@ -42,8 +46,9 @@ struct VariableInfo {
 
 inline bool operator<(const VariableInfo& first, const VariableInfo& second) {
   return (first.name < second.name) ||
-         (first.name == second.name) && (first.type < second.type);
+         ((first.name == second.name) && (first.type < second.type));
 }
+
 inline bool operator<(const VariableInfo& vi, const String& name) {
   return vi.name < name;
 }
@@ -55,14 +60,16 @@ class EvaluatorBase {
  public:
   virtual ~EvaluatorBase() = default;
   virtual void eval(const DirectVal&) = 0;
-  virtual void eval(const EvaluableMap&) = 0;
-  virtual void eval(const EvaluableArray&) = 0;
+  virtual void eval(const EvaluableDict&) = 0;
+  virtual void eval(const EvaluableList&) = 0;
   virtual void eval(const ArithmaticalOperator&) = 0;
   virtual void eval(const ArthmSelfAssignOperator&) = 0;
   virtual void eval(const LogicalOperator&) = 0;
   virtual void eval(const ComparisonOperator&) = 0;
-  virtual void eval(const ListOperation&) = 0;
-  virtual void eval(const FunctionInvocation&) = 0;
+  virtual void eval(const ListAlgorithm&) = 0;
+  virtual void eval(const ModuleFI&) = 0;
+  virtual void eval(const ContextFI&) = 0;
+  virtual void eval(const EvaluatorFI&) = 0;
   virtual void eval(const VariableFieldQuery&) = 0;
   virtual void eval(const Variable&) = 0;
 };
@@ -118,22 +125,23 @@ struct __StacklessEvaluableT : public __StacklessEvaluable {
   }
 };
 
-struct DirectVal : public __StacklessEvaluableT<DirectVal>, public JsonAdapter {
-  using Base = JsonAdapter;
-  using Base::Base;
+struct DirectVal : public __StacklessEvaluableT<DirectVal> {
+  template <class T>
+  DirectVal(T&& v) : value(std::forward<T>(v)) {}
+  Var value;
 };
 
-struct EvaluableMap : public __UseStackEvaluableT<EvaluableMap> {
-  using __Base = __UseStackEvaluableT<EvaluableMap>;
+struct EvaluableDict : public __UseStackEvaluableT<EvaluableDict> {
+  using __Base = __UseStackEvaluableT<EvaluableDict>;
   using value_type = std::map<String, EvaluablePtr>;
-  EvaluableMap(value_type v = {}, StackVariablesPtr cp = {})
+  EvaluableDict(value_type v = {}, StackVariablesPtr cp = {})
       : __Base(std::move(cp)), value{std::move(v)} {}
   value_type value;
 };
 
-struct EvaluableArray : public __StacklessEvaluableT<EvaluableArray> {
+struct EvaluableList : public __StacklessEvaluableT<EvaluableList> {
   using value_type = std::vector<EvaluablePtr>;
-  EvaluableArray(value_type v = {}) : value{std::move(v)} {}
+  EvaluableList(value_type v = {}) : value{std::move(v)} {}
   value_type value;
 };
 
@@ -367,10 +375,10 @@ inline OStream& operator<<(OStream& os, lsot o) {
   return os;
 }
 
-struct ListOperation : public __UseStackEvaluableT<ListOperation> {
-  ListOperation(String id, lsot t, EvaluablePtr c, EvaluablePtr list = {},
+struct ListAlgorithm : public __UseStackEvaluableT<ListAlgorithm> {
+  ListAlgorithm(String id, lsot t, EvaluablePtr c, EvaluablePtr list = {},
                 StackVariablesPtr cp = {})
-      : __UseStackEvaluableT<ListOperation>(std::move(cp), std::move(id)),
+      : __UseStackEvaluableT<ListAlgorithm>(std::move(cp), std::move(id)),
         type(t),
         list(std::move(list)),
         cond(std::move(c)) {}
@@ -380,17 +388,35 @@ struct ListOperation : public __UseStackEvaluableT<ListOperation> {
   EvaluablePtr cond;
 };
 
-struct FunctionInvocation : public __UseStackEvaluableT<FunctionInvocation> {
-  FunctionInvocation(String id, String name, EvaluablePtr param, String mdl,
-           StackVariablesPtr cp = {})
-      : __UseStackEvaluableT<FunctionInvocation>(std::move(cp), std::move(id)),
+template <class _SpecificFI>
+struct FunctionInvocationBase : public __UseStackEvaluableT<_SpecificFI> {
+  FunctionInvocationBase(String id, String name, EvaluablePtr param,
+                         StackVariablesPtr cp = {})
+      : __UseStackEvaluableT<_SpecificFI>(std::move(cp), std::move(id)),
         name(std::move(name)),
-        param(std::move(param)),
-        moduleName(std::move(mdl)) {}
+        param(std::move(param)) {}
 
   String name;
   EvaluablePtr param;
-  String moduleName;
+};
+
+struct ContextFI : public FunctionInvocationBase<ContextFI> {
+  using _Base = FunctionInvocationBase<ContextFI>;
+  using _Base::_Base;
+};
+
+struct ModuleFI : public FunctionInvocationBase<ModuleFI> {
+  using _Base = FunctionInvocationBase<ModuleFI>;
+  ModuleFI(String id, String name, EvaluablePtr param, FunctionModulePtr mdl,
+           StackVariablesPtr cp = {})
+      : _Base(move(id), move(name), move(param), std::move(cp)),
+        module(std::move(mdl)) {}
+  FunctionModulePtr module;
+};
+
+struct EvaluatorFI : public FunctionInvocationBase<EvaluatorFI> {
+  using _Base = FunctionInvocationBase<EvaluatorFI>;
+  using _Base::_Base;
 };
 
 struct VariableFieldQuery : public __StacklessEvaluableT<VariableFieldQuery> {
@@ -406,20 +432,9 @@ struct Variable : public __StacklessEvaluableT<Variable> {
   using _Base::_Base;
 };
 
-inline auto makeDV(int32_t val) {
-  return std::make_shared<DirectVal>(static_cast<int64_t>(val));
-}
-inline auto makeDV(int64_t val) { return std::make_shared<DirectVal>(val); }
-inline auto makeDV(float val) {
-  return std::make_shared<DirectVal>(static_cast<double>(val));
-}
-inline auto makeDV(double val) { return std::make_shared<DirectVal>(val); }
-inline auto makeDV(String val) {
-  return std::make_shared<DirectVal>(std::move(val));
-}
-inline auto makeDV(bool val) { return std::make_shared<DirectVal>(val); }
-inline auto makeDV(Json val) {
-  return std::make_shared<DirectVal>(std::move(val));
+template <class T>
+inline auto makeDV(T&& val) {
+  return std::make_shared<DirectVal>(std::forward<T>(val));
 }
 inline auto makeOp(String id, aot op, Evaluables params,
                    StackVariablesPtr cp = {}) {
@@ -443,12 +458,21 @@ inline auto makeOp(String id, cot op, Evaluables params,
 }
 inline auto makeOp(String id, lsot op, EvaluablePtr cond, EvaluablePtr list,
                    StackVariablesPtr cp = {}) {
-  return std::make_shared<ListOperation>(std::move(id), op, std::move(cond),
+  return std::make_shared<ListAlgorithm>(std::move(id), op, std::move(cond),
                                          std::move(list), std::move(cp));
 }
-inline auto makeFnc(String id, String name, EvaluablePtr param = {},
-                    String mdl = {}, StackVariablesPtr cp = {}) {
-  return std::make_shared<FunctionInvocation>(std::move(id), std::move(name),
+
+template <class _FI>
+inline auto makeSimpleFI(String id, String name, EvaluablePtr param = {},
+                         StackVariablesPtr cp = {}) {
+  return std::make_shared<_FI>(std::move(id), std::move(name), std::move(param),
+                               std::move(cp));
+}
+
+inline auto makeModuleFI(String id, String name, EvaluablePtr param = {},
+                         FunctionModulePtr mdl = {},
+                         StackVariablesPtr cp = {}) {
+  return std::make_shared<ModuleFI>(std::move(id), std::move(name),
                                     std::move(param), std::move(mdl),
                                     std::move(cp));
 }
@@ -460,11 +484,11 @@ inline auto makeVariableFieldQuery(String name,
   return std::make_shared<VariableFieldQuery>(std::move(name),
                                               std::move(paths));
 }
-inline auto makeEMap(EvaluableMap::value_type v = {}) {
-  return std::make_shared<EvaluableMap>(std::move(v));
+inline auto makeEDict(EvaluableDict::value_type v = {}) {
+  return std::make_shared<EvaluableDict>(std::move(v));
 }
-inline auto makeEArray(EvaluableArray::value_type v = {}) {
-  return std::make_shared<EvaluableArray>(std::move(v));
+inline auto makeEList(EvaluableList::value_type v = {}) {
+  return std::make_shared<EvaluableList>(std::move(v));
 }
 
 }  // namespace jas

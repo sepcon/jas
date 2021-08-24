@@ -1,16 +1,14 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
-#include <thread>
 
-#include "jas/CIF.h"
 #include "jas/ConsoleLogger.h"
 #include "jas/HistoricalEvalContext.h"
+#include "jas/JASFacade.h"
 #include "jas/Json.h"
 #include "jas/Keywords.h"
-#include "jas/Parser.h"
-#include "jas/SyntaxEvaluator.h"
-#include "jas/SyntaxValidator.h"
+#include "jas/ModuleManager.h"
+#include "jas/Translator.h"
 #include "jas/Version.h"
 
 using namespace std;
@@ -20,6 +18,10 @@ namespace fs = std::filesystem;
 using chrono::system_clock;
 
 static const CharType* JASE_TITLE = JASSTR("JAS - Json evAluation Syntax");
+static JASFacade& jasFacade() {
+  static JASFacade _;
+  return _;
+}
 
 void showHelp(int exitCode = -1) {
   CloggerSection showTitleSct{JASE_TITLE};
@@ -57,12 +59,14 @@ void showSupportedKeywords() {
   HistoricalEvalContext ctxt;
   auto displaySequence = [](const auto& sequence, const auto& prefix) {
     size_t maxLen = 0;
+    const size_t MIN_COLUMN_WIDTH = 20;
     int i = 0;
     for (auto& str : sequence) {
       if (str.size() > maxLen) {
         maxLen = str.size();
       }
     }
+    maxLen = maxLen < MIN_COLUMN_WIDTH ? MIN_COLUMN_WIDTH : maxLen;
     for (auto& item : sequence) {
       ++i;
       __clogger << setiosflags(ios::left) << setw(maxLen + 2)
@@ -77,9 +81,9 @@ void showSupportedKeywords() {
     }
   };
 
-  if (auto& evbSpecifiers = parser::evaluableSpecifiers();
+  if (auto& evbSpecifiers = Translator::evaluableSpecifiers();
       !evbSpecifiers.empty()) {
-    clogger() << "\nEvaluable keywords:";
+    clogger() << "\nBuilt-in operators:";
     displaySequence(evbSpecifiers, "");
   }
 
@@ -89,10 +93,16 @@ void showSupportedKeywords() {
     displaySequence(historicalContextFncs, prefix::specifier);
   }
 
-  if (auto cifFuncs = cif::supportedFunctions(); !cifFuncs.empty()) {
-    clogger() << "\nContext Independent Functions:";
-    displaySequence(cifFuncs, prefix::specifier);
+  for (auto& [name, module] : jasFacade().getModuleMgr()->modules()) {
+    clogger() << "\n"
+              << (name.empty() ? JASSTR("Global")
+                               : strJoin("Module `", name, "`"))
+              << JASSTR(" functions:");
+    FunctionNameList funcs;
+    module->enumerateFuncs(funcs);
+    displaySequence(funcs, prefix::specifier);
   }
+
   exit(0);
 }
 
@@ -147,51 +157,45 @@ int main(int argc, char** argv) {
   try {
     auto historicalContext =
         make_shared<HistoricalEvalContext>(nullptr, jcurrentInput, jLastInput);
-    auto evaluable = parser::parse(historicalContext, jexpression);
 
-    clogger() << "JAS reconstructed: "
-              << JsonTrait::dump(
-                     parser::reconstructJAS(historicalContext, jexpression));
-    SyntaxValidator validator;
-    if (!validator.validate(evaluable)) {
-      CloggerSection syntaxErrorSct(JASSTR("Syntax Error"));
-      clogger() << validator.getReport();
-      exit(-1);
-    } else {
-      {
-        validator.clear();
-        CloggerSection transformSyntaxSct(JASSTR("Transformed syntax"));
-        clogger() << validator.generateSyntax(evaluable);
-      }
+    auto lastEvalResultFile = jasFile;
+    lastEvalResultFile.replace_extension(".his");
+    auto debugLogFile = jasFile;
+    debugLogFile.replace_extension(".debug");
 
-      auto lastEvalResultFile = jasFile;
-      lastEvalResultFile.replace_extension(".his");
-      auto debugLogFile = jasFile;
-      debugLogFile.replace_extension(".debug");
+    HistoricalEvalContext::EvaluatedVariablesPtr lastEvalResult;
+    if (fs::exists(lastEvalResultFile, ec)) {
+      clogger() << "Load evaluation result from " << lastEvalResultFile;
+      Ifstream lerifs{lastEvalResultFile};
+      historicalContext->loadEvaluationResult(lerifs);
+    }
+    {
+      clogger() << "JAS reconstructed: "
+                << jasFacade()
+                       .getParser()
+                       ->reconstructJAS(historicalContext, jexpression)
+                       .toJson();
 
-      HistoricalEvalContext::EvaluationResultPtr lastEvalResult;
-      if (fs::exists(lastEvalResultFile, ec)) {
-        clogger() << "Load evaluation result from " << lastEvalResultFile;
-        Ifstream lerifs{lastEvalResultFile};
-        historicalContext->loadEvaluationResult(lerifs);
-      }
-      {
-        CLoggerTimerSection evalResultSct(JASSTR("Evaluation result"));
-        SyntaxEvaluator evaluator;
-        Ofstream debugLogFileStream{debugLogFile};
-        evaluator.setDebugInfoCallback([&debugLogFileStream](const auto& msg) {
-          debugLogFileStream << msg << "\n";
-        });
+      jasFacade().setContext(historicalContext);
+      jasFacade().setExpression(jexpression);
 
-        auto evaluated = evaluator.evaluate(evaluable, historicalContext);
-        clogger() << (evaluated ? *evaluated : JsonAdapter{});
-      }
+      CloggerSection transformSyntaxSct(JASSTR("Transformed syntax"));
+      clogger() << jasFacade().getTransformedSyntax();
+    }
+    {
+      CLoggerTimerSection evalResultSct(JASSTR("Evaluation result"));
+      Ofstream debugLogFileStream{debugLogFile};
+      jasFacade().setDebugCallback([&debugLogFileStream](const auto& msg) {
+        debugLogFileStream << msg << "\n";
+      });
 
-      Ofstream lastResultFileStream{lastEvalResultFile};
+      auto evaluated = jasFacade().evaluate();
+      clogger() << (evaluated.toJson());
+    }
 
-      if (historicalContext->saveEvaluationResult(lastResultFileStream)) {
-        clogger() << "Result saved to " << lastEvalResultFile;
-      }
+    Ofstream lastResultFileStream{lastEvalResultFile};
+    if (historicalContext->saveEvaluationResult(lastResultFileStream)) {
+      clogger() << "Result saved to " << lastEvalResultFile;
     }
   } catch (const Exception& e) {
     clogger() << "ERROR: " << e.what();

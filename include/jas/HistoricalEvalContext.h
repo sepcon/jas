@@ -2,17 +2,17 @@
 
 #include <map>
 
-#include "EvalContextStandard.h"
+#include "BasicEvalContext.h"
 #include "String.h"
 
 namespace jas {
 
-class HistoricalEvalContext : public EvalContextStandard {
-  using _Base = EvalContextStandard;
+class HistoricalEvalContext : public BasicEvalContext {
+  using _Base = BasicEvalContext;
 
  public:
-  using EvaluationResult = JsonObject;
-  using EvaluationResultPtr = std::shared_ptr<EvaluationResult>;
+  using EvaluatedVariables = Var;
+  using EvaluatedVariablesPtr = std::shared_ptr<EvaluatedVariables>;
   enum SnapshotIdx {
     SnapshotIdxOld = 0,
     SnapshotIdxNew = 1,
@@ -20,28 +20,31 @@ class HistoricalEvalContext : public EvalContextStandard {
   };
 
   HistoricalEvalContext(HistoricalEvalContext* p = nullptr,
-                        Json currentSnapshot = {}, Json lastSnapshot = {},
+                        Var currentSnapshot = {}, Var lastSnapshot = {},
                         String id = {});
   ~HistoricalEvalContext();
 
-  const EvaluationResultPtr& lastEvalResult();
-  void setLastEvalResult(EvaluationResultPtr res);
+  static std::shared_ptr<HistoricalEvalContext> make(
+      HistoricalEvalContext* p = nullptr, Var currentSnapshot = {},
+      Var lastSnapshot = {}, String id = {});
+
+  const EvaluatedVariablesPtr& lastEvalResult();
+  void setLastEvalResult(EvaluatedVariablesPtr res);
   void syncEvalResult();
   bool saveEvaluationResult(OStream& ostrm);
   bool loadEvaluationResult(IStream& istrm);
   std::vector<String> supportedFunctions() const override;
   bool functionSupported(const StringView& functionName) const override;
-  JsonAdapter invoke(const String& funcName, const JsonAdapter& param) override;
+  Var invoke(const String& funcName, const Var& param) override;
 
  private:
-  Json snapshots_[SnapshotIdxMax];
-  EvaluationResultPtr lastEvalResult_;
+  Var snapshots_[SnapshotIdxMax];
+  EvaluatedVariablesPtr lastEvalResult_;
 
-  Json snapshotValue(const String& path, const String& snapshot) const;
-  Json snapshotValue(const String& path,
-                     const SnapshotIdx snidx = SnapshotIdxNew) const;
-  EvalContextPtr subContext(const String& ctxtID,
-                            const JsonAdapter& input) override;
+  Var snapshotValue(const String& path, const String& snapshot) const;
+  Var snapshotValue(const String& path,
+                    const SnapshotIdx snidx = SnapshotIdxNew) const;
+  EvalContextPtr subContext(const String& ctxtID, const Var& input) override;
   bool hasData() const;
   HistoricalEvalContext* parent() const;
   String contextPath() const;
@@ -49,16 +52,18 @@ class HistoricalEvalContext : public EvalContextStandard {
 
   // context invocable methods
   /// check snapshot changed
-  JsonAdapter snchg(const Json& jpath);
+  Var snchg(const Var& jpath);
   /// check whether evaluated value differs with its last evaluation or not
-  JsonAdapter evchg(const Json& json);
-  JsonAdapter field(const Json& params);
-  JsonAdapter field_lv(const Json& path);
-  JsonAdapter field_cv(const Json& path);
-  JsonAdapter hfield2arr(const Json& params);
-  JsonAdapter hfield(const Json& params);
-  JsonAdapter last_eval(const Json& jVarName);
-  using CtxtFuncPtr = JsonAdapter (HistoricalEvalContext::*)(const Json&);
+  Var evchg(const Var& json);
+  Var field(const Var& params);
+  Var field_lv(const Var& path);
+  Var field_cv(const Var& path);
+  Var hfield2arr(const Var& params);
+  Var hfield(const Var& params);
+  Var last_eval(const Var& jVarName);
+  Var _hfield(const String& path, const String& iid);
+
+  using CtxtFuncPtr = Var (HistoricalEvalContext::*)(const Var&);
   using CtxtFunctionsMap = std::map<String, CtxtFuncPtr, std::less<>>;
 
   static CtxtFunctionsMap funcsmap_;

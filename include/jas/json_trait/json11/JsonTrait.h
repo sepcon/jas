@@ -1,6 +1,5 @@
 #pragma once
 #include <cassert>
-#include <filesystem>
 #include <json11.hpp>
 
 namespace jas {
@@ -41,7 +40,7 @@ template <class _string>
 struct _TraitImpl<_string, _allow_if_constructible_t<std::string, _string>> {
   static bool matchType(const Json& j) { return j.is_string(); }
   static const std::string& get(const Json& j) { return j.string_value(); }
-  static Json makeJson(_string v) { return Json(String(std::move(v))); }
+  static Json makeJson(_string v) { return std::string{v}; }
 };
 
 template <>
@@ -64,23 +63,12 @@ struct JsonTrait {
   using Object = Json::object;
   using Array = Json::array;
   using String = std::string;
-  using Path = std::filesystem::path;
 
   template <class T>
   static Json makeJson(T&& v) {
     return __details::_TraitImpl<
         std::decay_t<std::remove_reference_t<T>>>::makeJson(std::forward<T>(v));
   }
-
-  template <class T>
-  static constexpr bool isJsonConstructible() {
-    using Tp = std::remove_const_t<std::remove_reference_t<T>>;
-    return std::is_integral_v<Tp> || std::is_floating_point_v<Tp> ||
-           std::is_constructible_v<String, T> ||
-           std::is_constructible_v<Object, T> ||
-           std::is_constructible_v<Array, T>;
-  }
-
   static auto type(const Json& j) { return j.type(); }
   static bool isNull(const Json& j) { return j.is_null(); }
   static bool isDouble(const Json& j) { return j.is_number(); }
@@ -89,10 +77,6 @@ struct JsonTrait {
   static bool isString(const Json& j) { return j.is_string(); }
   static bool isArray(const Json& j) { return j.is_array(); }
   static bool isObject(const Json& j) { return j.is_object(); }
-  template <typename T>
-  static bool isType(const Json& j) {
-    return __details::_TraitImpl<T>::matchType(j);
-  }
 
   static bool hasKey(const Json& j, const String& key) {
     return !j[key].is_null();
@@ -103,8 +87,6 @@ struct JsonTrait {
   }
 
   static bool equal(const Json& j1, const Json& j2) { return j1 == j2; }
-
-  static bool empty(const Json& j) { return j.is_null(); }
 
   static size_t size(const Json& j) {
     if (j.is_object()) {
@@ -125,30 +107,7 @@ struct JsonTrait {
     return j[idx];
   }
 
-  static Json get(const Json& j, const Path& path) {
-    return get(&j, std::begin(path), std::end(path));
-  }
-
-  static Json get(const Object& j, const Path& path) {
-    auto beg = std::begin(path);
-    try {
-      decltype(auto) first = j.at(beg->u8string());
-      return get(&first, ++beg, std::end(path));
-    } catch (const std::out_of_range&) {
-      return {};
-    }
-  }
-
-  static Json get(const Json* j, Path::const_iterator beg,
-                  Path::const_iterator end) {
-    for (; beg != end; ++beg) {
-      j = &(j->operator[](beg->u8string()));
-      if (j->is_null()) {
-        return {};
-      }
-    }
-    return *j;
-  }
+  static Json get(const Json& j, const String& path) { return j[path]; }
 
   static void add(Object& obj, String key, Json value) {
     obj[std::move(key)] = std::move(value);

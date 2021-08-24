@@ -4,21 +4,20 @@
 
 #include "EvalContextIF.h"
 #include "Evaluable.h"
+#include "Var.h"
 
 namespace jas {
 
 using DebugOutputCallback = std::function<void(const String&)>;
-using EvaluatedValue = std::shared_ptr<JsonAdapter>;
-struct Evaluable;
+class ModuleManager;
+class Evaluable;
 
 class SyntaxEvaluator {
  public:
-  SyntaxEvaluator();
+  SyntaxEvaluator(ModuleManager* moduleMgr);
   ~SyntaxEvaluator();
-  EvaluatedValue evaluate(const Evaluable& e,
-                          EvalContextPtr rootContext = nullptr);
-  EvaluatedValue evaluate(const EvaluablePtr& e,
-                          EvalContextPtr rootContext = nullptr);
+  Var evaluate(const Evaluable& e, EvalContextPtr rootContext = nullptr);
+  Var evaluate(const EvaluablePtr& e, EvalContextPtr rootContext = nullptr);
 
   void setDebugInfoCallback(DebugOutputCallback);
 

@@ -3,6 +3,7 @@
 #include <memory>
 #include <vector>
 
+#include "Var.h"
 #include "Json.h"
 
 namespace jas {
@@ -15,13 +16,12 @@ class EvalContextIF {
   virtual ~EvalContextIF() = default;
   virtual std::vector<String> supportedFunctions() const = 0;
   virtual bool functionSupported(const StringView& functionName) const = 0;
-  virtual JsonAdapter invoke(const String& name, const JsonAdapter& param) = 0;
-  virtual JAdapterPtr property(const String& name) const = 0;
-  virtual void setProperty(const String& name, JAdapterPtr val) = 0;
+  virtual Var invoke(const String& name, const Var& param) = 0;
+  virtual Var variable(const String& name) = 0;
+  virtual Var setVariable(const String& name, Var val) = 0;
   virtual EvalContextPtr subContext(const String& ctxtID,
-                                    const JsonAdapter& input) = 0;
+                                    const Var& input) = 0;
   virtual String debugInfo() const = 0;
-  //  virtual JsonAdapter data() const = 0;
 };
 
 }  // namespace jas

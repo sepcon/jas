@@ -35,39 +35,44 @@ set(JAS_INCLUDE_PATHS ${JAS_INCLUDE_PATHS} include/jas/json_trait/${JAS_JSON_TYP
 include_directories(${JAS_INCLUDE_PATHS})
 
 add_library(jas
+    include/jas/JASFacade.h
     include/jas/Version.h
     include/jas/String.h
     include/jas/Exception.h
     include/jas/EvaluableClasses.h
     include/jas/Evaluable.h
-    include/jas/EvaluatedValue.h
-    include/jas/Parser.h
+    include/jas/Var.h
+    include/jas/ObjectPath.h
+    include/jas/Translator.h
     include/jas/SyntaxValidator.h
     include/jas/SyntaxEvaluator.h
     include/jas/EvalContextIF.h
-    include/jas/EvalContextStandard.h
+    include/jas/BasicEvalContext.h
     include/jas/HistoricalEvalContext.h
     include/jas/Json.h
-    include/jas/jaop.h
     include/jas/Keywords.h
-    include/jas/CIF.h
+    include/jas/Module.CIF.h
     include/jas/ConsoleLogger.h
     include/jas/OpTraits.h
     include/jas/SyntaxEvaluatorImpl.h
+    include/jas/FunctionModule.h
+    include/jas/FunctionModuleBaseT.h
+    include/jas/ModuleManager.h
 
-    src/Builtin.FIEDelegator.h
-    src/Builtin.ListOps.h
+    src/VarManipModuleShared.h
     src/SyntaxEvaluatorImpl.cpp
 
-    src/Parser.cpp
+    src/JASFacade.cpp
+    src/Translator.cpp
     src/SyntaxEvaluator.cpp
     src/SyntaxValidator.cpp
-    src/EvaluatedValue.cpp
-    src/EvalContextStandard.cpp
+    src/Var.cpp
+    src/BasicEvalContext.cpp
     src/HistoricalEvalContext.cpp
-    src/CIF.cpp
-    src/FunctionModule.cpp
-    src/Builtin.ListOps.cpp
+    src/ModuleManager.cpp
+    src/Module.CIF.cpp
+    src/Module.List.cpp
+    src/Module.Dict.cpp
     )
 
 add_subdirectory(test)

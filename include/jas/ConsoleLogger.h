@@ -20,15 +20,16 @@ struct __Clogger {
     __clogger << v;
     return *this;
   }
+
+  const __Clogger& operator<<(const Json& e) const {
+    __clogger << JsonTrait::dump(e);
+    return *this;
+  }
+
   ~__Clogger() { __clogger << std::endl; /*"\n";*/ }
 };
 
 inline auto clogger() { return __Clogger{}; }
-
-inline OStream& operator<<(OStream& os, const JsonAdapter& e) {
-  os << JsonTrait::dump(e);
-  return os;
-}
 
 struct CloggerSection {
   CloggerSection(const String& sectionName) {

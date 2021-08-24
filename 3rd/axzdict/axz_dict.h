@@ -168,9 +168,6 @@ public:
         bool		boolVal()	const;
         axz_wstring	stringVal() const;
         axz_bytes	bytesVal()	const;
-        const axz_dict_array&  arrayVal() const;
-        const axz_dict_object& objectVal() const;
-
 
         size_t size() const;
         const AxzDict& operator[]( const size_t idx ) const;

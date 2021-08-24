@@ -1,6 +1,5 @@
 #pragma once
 
-#include <filesystem>
 #include <nlohmann/json.hpp>
 
 namespace jas {
@@ -56,20 +55,10 @@ struct JsonTrait {
   using String = nlohmann::json::string_t;
   using Object = Json;  //::object_t;
   using Array = Json;
-  using Path = std::filesystem::path;
 
   template <class T>
   static Json makeJson(T&& v) {
-    Json j = v;
-    return j;
-  }
-
-  template <class T>
-  static constexpr bool isJsonConstructible() {
-    using Tp = std::remove_const_t<std::remove_reference_t<T>>;
-    return std::is_integral_v<Tp> || std::is_floating_point_v<Tp> ||
-           std::is_constructible_v<Object, T> ||
-           std::is_constructible_v<String, T>;
+    return std::forward<T>(v);
   }
 
   static auto type(const Json& j) { return j.type(); }
@@ -80,25 +69,11 @@ struct JsonTrait {
   static bool isString(const Json& j) { return j.is_string(); }
   static bool isArray(const Json& j) { return j.is_array(); }
   static bool isObject(const Json& j) { return j.is_object(); }
-  template <typename T>
-  static bool isType(const Json& j) {
-    return __details::TraitImpl<Json, T>::matchType(j);
-  }
 
   static bool hasKey(const Json& j, const String& key) {
     return j.contains(key);
   }
-
-  //  static bool hasKey(const Object& j, const String& key) {
-  //    auto it = j.find(key);
-  //    return it != j.end();
-  //  }
-
   static bool equal(const Json& j1, const Json& j2) { return j1 == j2; }
-
-  static bool empty(const Json& j) { return j.is_null(); }
-
-  //  static size_t size(const Object& o) { return o.size(); }
 
   static size_t size(const Json& j) {
     if (j.is_object() || j.is_array()) {
@@ -113,22 +88,18 @@ struct JsonTrait {
     return j[idx];
   }
 
-  //  static Json get(const Json& j, const Path& path) {
-  //    return get(&j, std::begin(path), std::end(path));
-  //  }
-
-  static Json get(const Object& j, const Path& path) {
-    auto beg = std::begin(path);
-    try {
-      decltype(auto) first = j.at(beg->u8string());
-      return get(&first, ++beg, std::end(path));
-    } catch (const Json::exception&) {
-      return {};
+  static Json get(const Object& j, const String& key) {
+    if (j.is_object()) {
+      auto it = j.find(key);
+      if (it != std::end(j)) {
+        return *it;
+      }
     }
+    return {};
   }
 
-  template <typename _ElemVisitorCallback>
-  static bool iterateArray(const Json& jarr, _ElemVisitorCallback&& visitElem) {
+  template <class _Json, typename _ElemVisitorCallback>
+  static bool iterateArray(_Json&& jarr, _ElemVisitorCallback&& visitElem) {
     auto iteratedAll = true;
     assert(jarr.is_array());
     for (auto it = std::begin(jarr); it != std::end(jarr); ++it) {
@@ -140,9 +111,8 @@ struct JsonTrait {
     return iteratedAll;
   }
 
-  template <typename _KeyValueVisitorCallback>
-  static bool iterateObject(const Json& jobj,
-                            _KeyValueVisitorCallback&& visitKV) {
+  template <class _Json, typename _KeyValueVisitorCallback>
+  static bool iterateObject(_Json&& jobj, _KeyValueVisitorCallback&& visitKV) {
     auto iteratedAll = true;
     assert(jobj.is_object());
     for (auto it = std::begin(jobj); it != std::end(jobj); ++it) {
@@ -152,21 +122,6 @@ struct JsonTrait {
       }
     }
     return iteratedAll;
-  }
-
-  static Json get(const Json* j, Path::const_iterator beg,
-                  Path::const_iterator end) {
-    for (; beg != end; ++beg) {
-      try {
-        j = &(j->at(beg->u8string()));
-        if (j->is_null()) {
-          return {};
-        }
-      } catch (const Json::exception&) {
-        return {};
-      }
-    }
-    return *j;
   }
 
   static void add(Json& obj, String key, Json value) {

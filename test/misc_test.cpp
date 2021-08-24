@@ -1,29 +1,21 @@
 #include "jas/ConsoleLogger.h"
-#include "jas/EvaluatedValue.h"
+#include "jas/Var.h"
+#include "jas/ObjectPath.h"
 
 using namespace jas;
-template <class T>
-auto ev(T&& v) {
-  return EvaluatedValue{v};
-}
+using namespace std::string_view_literals;
 
 int main() {
-  auto arr = EvaluatedValue::list();
-  arr.add(ev(10));
-  arr.add(ev(10));
-  arr.add(ev(10));
-  clogger() << "isArray = " << arr.isList();
-  clogger() << "isItem = " << arr.isSingle();
-  clogger() << arr.toJson();
+  Var var;
 
-  arr = EvaluatedValue::map({
-      {"hello", ev(10)},
-      {"world", ev("Hello")},
-  });
-
-  arr.add("world1", EvaluatedValue::list({ev(1), ev(1), ev(1), ev(1)}));
-  clogger() << "isArray = " << arr.isList();
-  clogger() << "isItem = " << arr.isSingle();
-  clogger() << "isMap = " << arr.isMap();
-  clogger() << arr.toJson();
+  //  auto con = Var::object({{"con", 1}});
+  //  auto world = Var::object({{"world", con}});
+  //  Var hello = Var::object({{"hello", world}});
+  //  CLoggerTimerSection measure{"Start measuring"};
+  //  for (auto i = 0; i < 1000000; ++i) {
+  //    hello.exists("hello/world/con");
+  //    hello.getPath("hello/world/con");
+  //  }
+  clogger() << var.toJson();
+  return 0;
 }

@@ -2,26 +2,23 @@
 
 #include <functional>
 
-#include "jas/EvalContextIF.h"
-#include "jas/EvaluableClasses.h"
+#include "EvalContextIF.h"
+#include "EvaluableClasses.h"
+#include "Var.h"
 
 namespace jas {
 
 using DebugOutputCallback = std::function<void(const String&)>;
-using EvaluatedValue = std::shared_ptr<JsonAdapter>;
-
-EvaluatedValue makeEvaluatedVal(JsonAdapter value);
-
-struct Evaluable;
+class ModuleManager;
+class Evaluable;
 class SyntaxEvaluatorImpl : public EvaluatorBase {
  public:
-  EvaluatedValue evaluate(const Evaluable& e,
-                          EvalContextPtr rootContext = nullptr);
-  EvaluatedValue evaluate(const EvaluablePtr& e,
-                          EvalContextPtr rootContext = nullptr);
+  Var evaluate(const Evaluable& e, EvalContextPtr rootContext = nullptr);
+  Var evaluate(const EvaluablePtr& e, EvalContextPtr rootContext = nullptr);
 
   void setDebugInfoCallback(DebugOutputCallback);
 
+  SyntaxEvaluatorImpl(ModuleManager* moduleMgr);
   ~SyntaxEvaluatorImpl();
 
   struct EvaluationFrame;
@@ -30,13 +27,12 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
   using EvaluatedOnReadValues = std::vector<EvaluatedOnReadValue>;
 
   struct EvaluationFrame {
-    EvaluationFrame(EvalContextPtr _context = {},
-                    EvaluatedValue _returnedValue = {},
+    EvaluationFrame(EvalContextPtr _context = {}, Var _returnedValue = {},
                     const Evaluable* _evb = nullptr)
         : context(_context), returnedValue(_returnedValue), evb(_evb) {}
 
     EvalContextPtr context;
-    EvaluatedValue returnedValue;
+    Var returnedValue;
     const Evaluable* evb;
     StackVariablesPtr variables;
   };
@@ -45,8 +41,8 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
     EvaluatedOnReadValue(SyntaxEvaluatorImpl* delegate, const Evaluable& e)
         : delegate_(delegate), e_(e) {}
 
-    operator EvaluatedValue() const {
-      if (!ed_) {
+    operator Var() const {
+      if (ed_.isNull()) {
         ed_ = delegate_->_evalRet(&e_);
       }
       return ed_;
@@ -54,29 +50,30 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
 
     SyntaxEvaluatorImpl* delegate_;
     const Evaluable& e_;
-    mutable EvaluatedValue ed_;
+    mutable Var ed_;
   };
 
   EvaluationStack stack_;
   DebugOutputCallback dbCallback_;
+  ModuleManager* moduleMgr_ = nullptr;
   int evalCount_ = 0;
   //-----------------------------------------------
   void eval(const DirectVal& v) override;
-  void eval(const EvaluableMap& v) override;
-  void eval(const EvaluableArray& v) override;
+  void eval(const EvaluableDict& v) override;
+  void eval(const EvaluableList& v) override;
   void eval(const ArithmaticalOperator& op) override;
   void eval(const ArthmSelfAssignOperator& op) override;
   void eval(const LogicalOperator& op) override;
   void eval(const ComparisonOperator& op) override;
-  void eval(const ListOperation& op) override;
-  void eval(const FunctionInvocation& func) override;
+  void eval(const ListAlgorithm& op) override;
+  void eval(const ContextFI& func) override;
+  void eval(const EvaluatorFI& func) override;
+  void eval(const ModuleFI& func) override;
   void eval(const VariableFieldQuery& query) override;
   void eval(const Variable& rv) override;
-  EvaluatedValue _queryOrEvalVariable(const String& variableName);
-  void _evalOnStack(const Evaluable* e, String ctxtID = {},
-                    JsonAdapter ctxtData = {});
-  EvaluatedValue _evalRet(const Evaluable* e, String ctxtID = {},
-                          JsonAdapter ctxtData = {});
+  Var _queryOrEvalVariable(const String& variableName);
+  void _evalOnStack(const Evaluable* e, String ctxtID = {}, Var ctxtData = {});
+  Var _evalRet(const Evaluable* e, String ctxtID = {}, Var ctxtData = {});
   /// Exceptions
   template <class _Exception, typename... _Msg>
   void evalThrowIf(bool cond, _Msg&&... msg);
@@ -85,28 +82,24 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
 
   /// Stack functions
   String stackDump() const;
-  void stackPush(String ctxtID, const Evaluable* evb,
-                 JsonAdapter contextData = {});
+  void stackPush(String ctxtID, const Evaluable* evb, Var contextData = {});
   void stackPop();
-  void stackReturn(JsonAdapter val);
-  void stackReturn(EvaluatedValue&& val);
-  void stackReturn(EvaluatedValue&& val, const Evaluable& ev);
-  inline void stackDebugReturnVal(const EvaluatedValue& e,
-                                  const Evaluable* evb);
-  EvaluatedValue& stackReturnedVal();
-  EvaluatedValue stackTakeReturnedVal();
+  void stackReturn(Var val);
+  void stackReturn(Var val, const Evaluable& ev);
+  inline void stackDebugReturnVal(const Var& e, const Evaluable* evb);
+  Var& stackReturnedVal();
+  Var stackTakeReturnedVal();
   EvaluationFrame& stackTopFrame();
   const EvalContextPtr& stackTopContext();
   const EvalContextPtr& stackRootContext();
-  EvaluatedValue evaluateSingleVar(const EvalContextPtr& ctxt,
-                                   const String& varname,
-                                   const VariableInfo& vi);
+  Var evaluateSingleVar(const EvalContextPtr& ctxt, const String& varname,
+                        const VariableInfo& vi);
   void evaluateVariables(const StackVariablesPtr& params);
   String generateBackTrace(const String& msg) const;
 
   /// Evaluations:
   template <class _Operator, class _Callable>
-  EvaluatedValue evaluateOperator(const _Operator& op, _Callable&& eval_func);
+  Var evaluateOperator(const _Operator& op, _Callable&& eval_func);
   template <class _ComparisonMethod, size_t expected_count, class _Operation>
   void validateParamCount(const _Operation& o);
   template <class _Operation>
@@ -118,43 +111,41 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
       const _OperatorBase<T, typename T::OperatorType>& o);
   template <class _OpType, _OpType _opType, template <class> class _std_op,
             template <class, class, class> class _ApplierImpl, class _Params>
-  EvaluatedValue applyOp(const _Params& ievals);
+  Var applyOp(const _Params& ievals);
   template <class _OpType, _OpType _opType, template <class> class _std_op,
             class _Params>
-  EvaluatedValue applySingleBinOp(const _Params& ievals);
+  Var applySingleBinOp(const _Params& ievals);
   template <class _OpType, _OpType _opType, template <class> class _std_op,
             class _Params>
-  EvaluatedValue applyMultiBinOp(const _Params& ievals);
+  Var applyMultiBinOp(const _Params& ievals);
 
   template <class _OpType, _OpType _opType, template <class> class _std_op,
             class _Params>
-  EvaluatedValue applyUnaryOp(const _Params& ievals);
+  Var applyUnaryOp(const _Params& ievals);
   template <class _Params>
-  EvaluatedValue applyLogicalAndOp(const _Params& ievals);
+  Var applyLogicalAndOp(const _Params& ievals);
   template <class _Params>
-  EvaluatedValue applyLogicalOrOp(const _Params& ievals);
+  Var applyLogicalOrOp(const _Params& ievals);
   static String syntaxOf(const Evaluable& e);
 
   template <class T, class _std_op, class _Params>
   struct ApplyUnaryOpImpl {
-    static EvaluatedValue apply(const _Params& evals) {
-      auto evaled = EvaluatedValue{evals.back()};
-      throwIf<EvaluationError>(!evaled, "Evaluated to null");
-      return makeEvaluatedVal(
-          _std_op{}(EvaluatedValue { evals.back() }->get<T>()));
+    static Var apply(const _Params& evals) {
+      auto evaled = Var{evals.back()};
+      throwIf<EvaluationError>(evaled.isNull(), "Evaluated to null");
+      return (_std_op{}(Var{evals.back()}.getValue<T>()));
     }
   };
 
   template <class T, class _std_op, class _Params>
   struct ApplySingleBinOpImpl {
-    static EvaluatedValue apply(const _Params& evals) {
-      EvaluatedValue lhsEv = evals.front();
-      EvaluatedValue rhsEv = evals.back();
+    static Var apply(const _Params& evals) {
+      Var lhsEv = evals.front();
+      Var rhsEv = evals.back();
       try {
-        return makeEvaluatedVal(_std_op{}(lhsEv->get<T>(), rhsEv->get<T>()));
-      } catch (const DirectVal::TypeError&) {
-        throw_<DirectVal::TypeError>("(", lhsEv->dump(), ", ", rhsEv->dump(),
-                                     ")");
+        return (_std_op{}(lhsEv.getValue<T>(), rhsEv.getValue<T>()));
+      } catch (const TypeError&) {
+        throw_<TypeError>("(", lhsEv.dump(), ", ", rhsEv.dump(), ")");
         return {};
       }
     }
@@ -162,44 +153,43 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
 
   template <class T, class _std_op, class _Params>
   struct ApplyMutiBinOpImpl {
-    static EvaluatedValue apply(const _Params& evals) {
+    static Var apply(const _Params& evals) {
       auto it = std::begin(evals);
-      EvaluatedValue lastEv = *it++;
-      auto v = lastEv->get<T>();
+      Var lastEv = *it++;
+      auto v = lastEv.getValue<T>();
       _std_op applier;
       while (it != std::end(evals)) {
-        EvaluatedValue nextEv = *it;
-        throwIf<EvaluationError>(!nextEv, "operate on null");
+        Var nextEv = *it;
+        throwIf<EvaluationError>(nextEv.isNull(), "operate on null");
         try {
-          v = applier(v, nextEv->get<T>());
+          v = applier(v, nextEv.getValue<T>());
           std::swap(lastEv, nextEv);
-        } catch (const DirectVal::TypeError&) {
-          throw_<DirectVal::TypeError>("(", lastEv->dump(), ", ",
-                                       nextEv->dump(), ")");
+        } catch (const TypeError&) {
+          throw_<TypeError>("(", lastEv.dump(), ", ", nextEv.dump(), ")");
         }
         ++it;
       }
-      return makeEvaluatedVal(move(v));
+      return v;
     }
   };
 
   template <class T, class _std_op, bool untilVal, class _Params>
   struct ApplyLogicalOpImpl {
-    static EvaluatedValue apply(const _Params& evals) {
+    static Var apply(const _Params& evals) {
       bool v = !untilVal;
       _std_op applier;
       for (auto& e : evals) {
-        EvaluatedValue nextEv = e;
+        Var nextEv = e;
         try {
-          v = applier(v, static_cast<bool>(nextEv->get<T>()));
+          v = applier(v, static_cast<bool>(nextEv.getValue<T>()));
           if (v == untilVal) {
             break;
           }
-        } catch (const DirectVal::TypeError&) {
-          throw_<DirectVal::TypeError>("(", v, ", ", nextEv->dump(), ")");
+        } catch (const TypeError&) {
+          throw_<TypeError>("(", v, ", ", nextEv.dump(), ")");
         }
       }
-      return makeEvaluatedVal(move(v));
+      return (std::move(v));
     }
   };
   template <class T, class _std_op, class _Params>

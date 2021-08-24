@@ -766,8 +766,6 @@ bool 		AxzDict::boolVal() const                                        { return 
 axz_wstring AxzDict::stringVal() const                                          { return this->m_val->stringVal(); }
 axz_bytes 	AxzDict::bytesVal() const		                        { return this->m_val->bytesVal(); }
 size_t 		AxzDict::size() const			                        { return this->m_val->size(); }
-const axz_dict_array &AxzDict::arrayVal() const                                 { return this->m_val->arrayVal(); }
-const axz_dict_object &AxzDict::objectVal() const                               { return this->m_val->objectVal(); }
 
 const AxzDict& AxzDict::operator[]( const size_t idx ) const
 {

@@ -14,6 +14,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   SyntaxValidatorImpl() { os_ << std::boolalpha; }
 
   bool validate(const Evaluable& e) {
+    clear();
     _eval(&e);
     flushAllErrors();
     return errors_.empty();
@@ -32,6 +33,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   }
 
   String generateSyntax(const Evaluable& e) {
+    clear();
     _eval(&e);
     return os_.str();
   }
@@ -111,11 +113,9 @@ class SyntaxValidatorImpl : public EvaluatorBase {
     return ret;
   }
 
-  void eval(const DirectVal& val) override {
-    os_ << JsonTrait::dump(val.value);
-  }
+  void eval(const DirectVal& val) override { os_ << val.value.dump(); }
 
-  void eval(const EvaluableMap& e) override {
+  void eval(const EvaluableDict& e) override {
     os_ << JASSTR("{");
     if (!e.value.empty()) {
       auto it = std::begin(e.value);
@@ -134,7 +134,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
     os_ << JASSTR("}");
   }
 
-  void eval(const EvaluableArray& e) override {
+  void eval(const EvaluableList& e) override {
     os_ << JASSTR("[");
     if (!e.value.empty()) {
       auto it = std::begin(e.value);
@@ -193,7 +193,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   }
   void eval(const ComparisonOperator& op) override { dumpBinaryOp(op, true); }
 
-  void eval(const ListOperation& op) override {
+  void eval(const ListAlgorithm& op) override {
     os_ << op.type << JASSTR("(");
     if (!op.list) {
       os_ << std::quoted(JASSTR("current_list"));
@@ -210,15 +210,23 @@ class SyntaxValidatorImpl : public EvaluatorBase {
     os_ << JASSTR(")");
   }
 
-  void eval(const FunctionInvocation& fnc) override {
-    os_ << fnc.moduleName << (fnc.moduleName.empty() ? "" : ".")
-        << (fnc.name.empty()
+  template <class _FI>
+  void _eval(const FunctionInvocationBase<_FI>& fnc) {
+    os_ << (fnc.name.empty()
                 ? bookMarkError(JASSTR("Funtion name must not be empty"))
                 : fnc.name);
     os_ << JASSTR("(");
 
     _eval(fnc.param.get());
     os_ << JASSTR(")");
+  }
+
+  void eval(const EvaluatorFI& fnc) override { _eval<EvaluatorFI>(fnc); }
+  void eval(const ContextFI& fnc) override { _eval<ContextFI>(fnc); }
+  void eval(const ModuleFI& fnc) override {
+    auto moduleName = fnc.module ? fnc.module->moduleName() : String{};
+    os_ << moduleName << (moduleName.empty() ? "" : ".");
+    _eval<ModuleFI>(fnc);
   }
 
   void eval(const VariableFieldQuery& vfq) override {

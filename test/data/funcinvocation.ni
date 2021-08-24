@@ -12,10 +12,6 @@ true
 true
 {"@contains":["Hello", "bell"]}
 false
-{"@to_string":100.001}
-"100.001"
-{"@to_string":"100.001"}
-"\"100.001\""
 {"@has_null_val":{"not_null": 1}}
 false
 {"@has_null_val":{"null": null}}

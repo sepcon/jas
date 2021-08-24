@@ -4,8 +4,8 @@
 #include <cassert>
 #include <memory>
 
-#include "jas/CIF.h"
 #include "jas/Exception.h"
+#include "jas/FunctionModule.h"
 #include "jas/Keywords.h"
 
 #define __ctxtm(methodName) &HistoricalEvalContext::methodName
@@ -42,8 +42,8 @@ static const auto path_sep = JASSTR("/");
 
 static HistoricalEvalContext::SnapshotIdx _toSnapshotIdx(
     const String& snapshot);
-static JsonObject _makeHistoricalData(Json newd, Json oldd = {});
-static bool _hasHistoricalShape(const Json& data);
+static Var _makeHistoricalData(Var newd, Var oldd = {});
+static bool _hasHistoricalShape(const Var& data);
 
 #define __mc_invokeOnParentIfNoData(func, defaultRet, ...) \
   if (!hasData()) {                                        \
@@ -67,12 +67,19 @@ HistoricalEvalContext::CtxtFunctionsMap HistoricalEvalContext::funcsmap_ = {
 };
 
 HistoricalEvalContext::HistoricalEvalContext(HistoricalEvalContext* p,
-                                             Json currentSnapshot,
-                                             Json lastSnapshot, String id)
+                                             Var currentSnapshot,
+                                             Var lastSnapshot, String id)
     : _Base(p, move(id)),
       snapshots_{move(lastSnapshot), move(currentSnapshot)} {}
 
 HistoricalEvalContext::~HistoricalEvalContext() { syncEvalResult(); }
+
+std::shared_ptr<HistoricalEvalContext> HistoricalEvalContext::make(
+    HistoricalEvalContext* p, Var currentSnapshot, Var lastSnapshot,
+    String id) {
+  return make_shared<HistoricalEvalContext>(p, move(currentSnapshot),
+                                            move(lastSnapshot), move(id));
+}
 
 bool HistoricalEvalContext::functionSupported(
     const StringView& functionName) const {
@@ -83,8 +90,7 @@ bool HistoricalEvalContext::functionSupported(
   }
 }
 
-JsonAdapter HistoricalEvalContext::invoke(const String& funcName,
-                                          const JsonAdapter& param) {
+Var HistoricalEvalContext::invoke(const String& funcName, const Var& param) {
   if (auto it = funcsmap_.find(funcName); it != std::end(funcsmap_)) {
     return (this->*(it->second))(param);
   } else {
@@ -92,35 +98,34 @@ JsonAdapter HistoricalEvalContext::invoke(const String& funcName,
   }
 }
 
-Json HistoricalEvalContext::snapshotValue(const String& path,
-                                          const String& snapshot) const {
+Var HistoricalEvalContext::snapshotValue(const String& path,
+                                         const String& snapshot) const {
   return snapshotValue(path, _toSnapshotIdx(snapshot));
 }
 
-Json HistoricalEvalContext::snapshotValue(const String& path,
-                                          const SnapshotIdx snidx) const {
+Var HistoricalEvalContext::snapshotValue(const String& path,
+                                         const SnapshotIdx snidx) const {
   if (!path.empty()) {
-    return JsonTrait::get(snapshots_[snidx], path);
+    return snapshots_[snidx].getPath(path);
   } else {
     return snapshots_[snidx];
   }
 }
 
 EvalContextPtr HistoricalEvalContext::subContext(const String& ctxtID,
-                                                 const JsonAdapter& input) {
-  if (_hasHistoricalShape(input)) {
+                                                 const Var& input) {
+  if (!input.isNull() && _hasHistoricalShape(input)) {
     return make_shared<HistoricalEvalContext>(
-        this, JsonTrait::get(input.value, cstr::h_field_cur),
-        JsonTrait::get(input.value, cstr::h_field_lst), ctxtID);
+        this, input.getAt(cstr::h_field_cur), input.getAt(cstr::h_field_lst),
+        ctxtID);
   } else {
-    return make_shared<HistoricalEvalContext>(this, input.value, Json{},
-                                              ctxtID);
+    return make_shared<HistoricalEvalContext>(this, input, Var{}, ctxtID);
   }
 }
 
 bool HistoricalEvalContext::hasData() const {
   return std::any_of(std::begin(snapshots_), std::end(snapshots_),
-                     [](auto& sn) { return !JsonTrait::isNull(sn); });
+                     [](auto& sn) { return !sn.isNull(); });
 }
 
 HistoricalEvalContext* HistoricalEvalContext::parent() const {
@@ -144,33 +149,31 @@ String HistoricalEvalContext::contextPath(const String& variableName) const {
   return strJoin(contextPath(), cstr::path_sep, variableName);
 }
 
-JsonAdapter HistoricalEvalContext::snchg(const Json& jpath) {
+Var HistoricalEvalContext::snchg(const Var& jpath) {
   __mc_invokeOnParentIfNoData(snchg, false, jpath);
 
-  auto path = JsonTrait::get<String>(jpath);
+  auto path = jpath.getString();
   if (path.empty()) {
-    return !JsonTrait::equal(snapshots_[SnapshotIdxNew],
-                             snapshots_[SnapshotIdxOld]);
+    return (snapshots_[SnapshotIdxNew] != snapshots_[SnapshotIdxOld]);
   } else {
-    return !JsonTrait::equal(JsonTrait::get(snapshots_[SnapshotIdxNew], path),
-                             JsonTrait::get(snapshots_[SnapshotIdxOld], path));
+    auto& newsn = snapshots_[SnapshotIdxNew];
+    auto& oldsn = snapshots_[SnapshotIdxOld];
+    return (newsn.getAt(path) != oldsn.getAt(path));
   }
 }
 
-JsonAdapter HistoricalEvalContext::evchg(const Json& json) {
-  __jas_func_throw_invalidargs_if(!JsonTrait::isString(json),
-                                  "property name must be non-empty string",
-                                  json);
+Var HistoricalEvalContext::evchg(const Var& json) {
+  __jas_func_throw_invalidargs_if(
+      !json.isString(), "property name must be non-empty string", json);
 
-  auto propID = JsonTrait::get<String>(json);
+  auto propID = json.asString();
   __jas_ni_func_throw_invalidargs_if(propID.empty(),
                                      "property name must not be empty");
-  auto changed = true;
+  Var changed = true;
 
-  if (auto itProp = properties_.find(propID); itProp != std::end(properties_)) {
+  if (auto itProp = variables_.find(propID); itProp != std::end(variables_)) {
     auto& levr = *lastEvalResult();
-    changed = !JsonTrait::equal(JsonTrait::get(levr, contextPath(propID)),
-                                *itProp->second);
+    changed = levr.getAt(contextPath(propID)) != itProp->second;
   } else if (parent_) {
     changed = parent()->evchg(propID);
   } else {
@@ -179,130 +182,73 @@ JsonAdapter HistoricalEvalContext::evchg(const Json& json) {
   return changed;
 }
 
-JsonAdapter HistoricalEvalContext::field(const Json& params) {
-  __mc_invokeOnParentIfNoData(field, {}, params);
+Var HistoricalEvalContext::field(const Var& params) {
+  __mc_invokeOnParentIfNoData(field, Var{}, params);
   String path;
   String snapshot;
-  if (JsonTrait::isString(params)) {
-    path = JsonTrait::get<String>(params);
-  } else if (JsonTrait::isObject(params)) {
-    path = JsonTrait::get<String>(params, cstr::path);
-    snapshot = JsonTrait::get<String>(params, cstr::snapshot);
+  if (params.isString()) {
+    path = params.asString();
+  } else if (params.isDict()) {
+    path = params.getAt(cstr::path).getString();
+    snapshot = params.getAt(cstr::snapshot).getString();
   }
   return snapshotValue(path, snapshot);
 }
 
-JsonAdapter HistoricalEvalContext::field_lv(const Json& path) {
-  __mc_invokeOnParentIfNoData(field_lv, {}, path);
+Var HistoricalEvalContext::field_lv(const Var& path) {
+  __mc_invokeOnParentIfNoData(field_lv, Var{}, path);
   String sp;
-  if (JsonTrait::isString(path)) {
-    sp = JsonTrait::get<String>(path);
+  if (path.isString()) {
+    sp = path.asString();
   } else {
-    __jas_func_throw_invalidargs_if(!JsonTrait::isNull(path),
+    __jas_func_throw_invalidargs_if(!path.isNull(),
                                     "input must be string or nothing", path);
   }
   return snapshotValue(sp, SnapshotIdxOld);
 }
 
-JsonAdapter HistoricalEvalContext::field_cv(const Json& path) {
-  __mc_invokeOnParentIfNoData(field_cv, {}, path);
+Var HistoricalEvalContext::field_cv(const Var& path) {
+  __mc_invokeOnParentIfNoData(field_cv, Var{}, path);
   String sp;
-  if (JsonTrait::isString(path)) {
-    sp = JsonTrait::get<String>(path);
+  if (path.isString()) {
+    sp = path.asString();
   } else {
-    __jas_func_throw_invalidargs_if(JsonTrait::isNull(path),
-                                    "must be string or nothing", path);
+    __jas_func_throw_invalidargs_if(!path.isNull(), "must be string or nothing",
+                                    path);
   }
 
   return snapshotValue(sp, SnapshotIdxNew);
 }
 
-JsonAdapter HistoricalEvalContext::hfield2arr(const Json& params) {
-  __jas_func_throw_invalidargs_if(JsonTrait::size(params) != 2,
+Var HistoricalEvalContext::hfield2arr(const Var& params) {
+  __jas_func_throw_invalidargs_if(!params.isList() || params.size() != 2,
                                   " input must be array of [path, iid]",
                                   params);
-
-  return hfield(
-      JsonObject{{JASSTR("path"), params[0]}, {JASSTR("iid"), params[1]}});
+  return _hfield(params[0].getString(), params[1].getString());
 }
 
-JsonAdapter HistoricalEvalContext::hfield(const Json& params) {
-  __mc_invokeOnParentIfNoData(hfield, {}, params);
-
+Var HistoricalEvalContext::hfield(const Var& params) {
   String path;
   String iid;
-
-  if (JsonTrait::isString(params)) {
-    path = JsonTrait::get<String>(params);
-  } else if (JsonTrait::isObject(params)) {
-    path = JsonTrait::get<String>(params, cstr::path);
-    iid = JsonTrait::get<String>(params, cstr::iid);
+  if (params.isString()) {
+    path = params.asString();
+  } else if (params.isDict()) {
+    path = params.getAt(cstr::path).getString();
+    iid = params.getAt(cstr::iid).getString();
   }
-  auto newd = snapshotValue(path);
-  if (!JsonTrait::isArray(newd)) {
-    return _makeHistoricalData(move(newd), snapshotValue(path, SnapshotIdxOld));
-  }
-
-  // is array:
-  auto findItem = [&iid](const Json& list, const Json& itemIdVal) {
-    Json out;
-    JsonTrait::iterateArray(list, [&](auto&& item) {
-      if (JsonTrait::equal(JsonTrait::get(item, iid), itemIdVal)) {
-        out = item;
-        return false;
-      }
-      return true;
-    });
-    return out;
-  };
-
-  auto& newList = newd;
-  auto oldList = snapshotValue(path, SnapshotIdxOld);
-
-  if (!iid.empty()) {
-    auto output = JsonTrait::array();
-    JsonTrait::iterateArray(newList, [&](auto&& newItem) {
-      JsonTrait::add(
-          output,
-          _makeHistoricalData(newItem,
-                              findItem(oldList, JsonTrait::get(newItem, iid))));
-      return true;
-    });
-    return output;
-  } else {
-    auto oldListSize = JsonTrait::size(newList);
-    auto newListSize = JsonTrait::size(oldList);
-    auto minSize = std::min(oldListSize, newListSize);
-    auto output = JsonTrait::array();
-
-    for (size_t i = 0; i < minSize; ++i) {
-      JsonTrait::add(output, _makeHistoricalData(JsonTrait::get(newList, i),
-                                                 JsonTrait::get(oldList, i)));
-    }
-    if (minSize == oldListSize) {
-      for (size_t i = minSize; i < newListSize; ++i) {
-        JsonTrait::add(output, _makeHistoricalData(JsonTrait::get(newList, i)));
-      }
-    } else {
-      for (size_t i = minSize; i < oldListSize; ++i) {
-        JsonTrait::add(output,
-                       _makeHistoricalData({}, JsonTrait::get(oldList, i)));
-      }
-    }
-    return output;
-  }
+  return _hfield(path, iid);
 }
 
-JsonAdapter HistoricalEvalContext::last_eval(const Json& jVarName) {
-  __jas_func_throw_invalidargs_if(!JsonTrait::isString(jVarName),
+Var HistoricalEvalContext::last_eval(const Var& jVarName) {
+  __jas_func_throw_invalidargs_if(!jVarName.isString(),
                                   "Variable name must be string", jVarName);
-  decltype(auto) variableName = JsonTrait::get<String>(jVarName);
+  decltype(auto) variableName = jVarName.asString();
   __jas_ni_func_throw_invalidargs_if(variableName.empty(),
                                      "Variable name must not be empty");
   auto& lastEvals = *lastEvalResult();
   auto ctxtPath = contextPath(variableName);
-  if (JsonTrait::hasKey(lastEvals, ctxtPath)) {
-    return JsonTrait::get(lastEvals, ctxtPath);
+  if (lastEvals.contains(ctxtPath)) {
+    return lastEvals.getPath(ctxtPath);
   } else if (parent_) {
     return parent()->last_eval(jVarName);
   } else {
@@ -310,30 +256,80 @@ JsonAdapter HistoricalEvalContext::last_eval(const Json& jVarName) {
   }
 }
 
-const HistoricalEvalContext::EvaluationResultPtr&
+Var HistoricalEvalContext::_hfield(const String& path, const String& iid) {
+  __mc_invokeOnParentIfNoData(_hfield, Var{}, path, iid);
+  auto newd = snapshotValue(path);
+  if (!newd.isList()) {
+    return _makeHistoricalData(move(newd), snapshotValue(path, SnapshotIdxOld));
+  }
+
+  // is array:
+  auto findItem = [&iid](const Var& list, const Var& itemIdVal) {
+    Var out;
+    for (auto& item : list.asList()) {
+      if (item.contains(iid) && item.getAt(iid) == itemIdVal) {
+        out = item;
+        break;
+      }
+    }
+    return out;
+  };
+
+  auto& newList = newd;
+  auto oldList = snapshotValue(path, SnapshotIdxOld);
+
+  if (!iid.empty()) {
+    auto output = Var::list();
+    for (auto& newItem : newList.asList()) {
+      output.add(_makeHistoricalData(newItem, findItem(oldList, newItem[iid])));
+    }
+    return output;
+  } else {
+    auto oldListSize = oldList.size();
+    auto newListSize = newList.size();
+    auto minSize = std::min(oldListSize, newListSize);
+    auto output = Var::list();
+    for (size_t i = 0; i < minSize; ++i) {
+      output.add(_makeHistoricalData(newList[i], oldList[i]));
+    }
+    if (minSize == oldListSize) {
+      for (size_t i = minSize; i < newListSize; ++i) {
+        output.add(_makeHistoricalData(newList[i]));
+      }
+    } else {
+      for (size_t i = minSize; i < oldListSize; ++i) {
+        output.add(_makeHistoricalData({}, oldList[i]));
+      }
+    }
+    return output;
+  }
+}
+
+const HistoricalEvalContext::EvaluatedVariablesPtr&
 HistoricalEvalContext::lastEvalResult() {
   if (!lastEvalResult_) {
     if (parent_) {
       lastEvalResult_ = parent()->lastEvalResult();
     } else {
-      lastEvalResult_ = make_shared<EvaluationResult>();
+      lastEvalResult_ =
+          make_shared<EvaluatedVariables>(EvaluatedVariables::dict());
     }
   }
   return lastEvalResult_;
 }
 
 void HistoricalEvalContext::setLastEvalResult(
-    HistoricalEvalContext::EvaluationResultPtr res) {
+    HistoricalEvalContext::EvaluatedVariablesPtr res) {
   lastEvalResult_ = move(res);
 }
 
 void HistoricalEvalContext::syncEvalResult() {
-  if (!properties_.empty()) {
+  if (!variables_.empty()) {
     auto& evr = *lastEvalResult();
     auto thisCtxtPath = contextPath();
-    for (auto& [prop, val] : properties_) {
-      if (val) {
-        evr[strJoin(thisCtxtPath, cstr::path_sep, prop)] = val->value;
+    for (auto& [prop, val] : variables_) {
+      if (!val.isNull()) {
+        evr[strJoin(thisCtxtPath, cstr::path_sep, prop)] = val;
       }
     }
   }
@@ -342,7 +338,7 @@ void HistoricalEvalContext::syncEvalResult() {
 bool HistoricalEvalContext::saveEvaluationResult(OStream& ostrm) {
   syncEvalResult();
   if (auto res = lastEvalResult()) {
-    ostrm << JsonTrait::dump(*res);
+    ostrm << JsonTrait::dump(res->toJson());
     return true;
   }
   return false;
@@ -351,8 +347,7 @@ bool HistoricalEvalContext::saveEvaluationResult(OStream& ostrm) {
 bool HistoricalEvalContext::loadEvaluationResult(IStream& istrm) {
   auto json = JsonTrait::parse(istrm);
   if (JsonTrait::isObject(json)) {
-    lastEvalResult_ =
-        make_shared<EvaluationResult>(JsonTrait::get<JsonObject>(json));
+    lastEvalResult_ = make_shared<EvaluatedVariables>(json);
     return true;
   }
   return false;
@@ -385,16 +380,15 @@ static HistoricalEvalContext::SnapshotIdx _toSnapshotIdx(
   return HistoricalEvalContext::SnapshotIdxNew;
 }
 
-static JsonObject _makeHistoricalData(Json curd, Json lstd) {
-  return JsonTrait::object({
+static Var _makeHistoricalData(Var curd, Var lstd) {
+  return Var::dict({
       {cstr::h_field_lst, move(lstd)},
       {cstr::h_field_cur, move(curd)},
   });
 }
 
-static bool _hasHistoricalShape(const Json& data) {
-  return JsonTrait::isObject(data) && JsonTrait::size(data) == 2 &&
-         JsonTrait::hasKey(data, cstr::h_field_cur) &&
-         JsonTrait::hasKey(data, cstr::h_field_lst);
+static bool _hasHistoricalShape(const Var& data) {
+  return data.isDict() && data.size() == 2 &&
+         data.contains(cstr::h_field_cur) && data.contains(cstr::h_field_lst);
 }
 }  // namespace jas
