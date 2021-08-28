@@ -30,6 +30,54 @@ struct EvaluableInfo {
   String id;
 };
 
+struct JasSymbol {
+  constexpr JasSymbol(CharType prefix = 0) : prefix{prefix} {}
+  bool matchPrefix(const String& str) const {
+    if (!str.empty() && str[0] == prefix[0]) {
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  CharType prefix[1];
+};
+
+bool operator<(const JasSymbol& sym, const String& pair) {
+  if (sym.matchPrefix(pair)) {
+    return false;
+  } else {
+    return sym.prefix < pair;
+  }
+}
+
+bool operator<(const String& str, const JasSymbol& sym) {
+  if (sym.matchPrefix(str)) {
+    return false;
+  } else {
+    return str < sym.prefix;
+  }
+}
+
+template <class _Sequence>
+struct RangeIterable {
+  using Iterator = typename _Sequence::const_iterator;
+  RangeIterable(Iterator b, Iterator e) : b_(b), e_(e) {}
+  RangeIterable(std::pair<Iterator, Iterator> p) : b_(p.first), e_(p.second) {}
+
+  auto begin() { return b_; }
+  auto begin() const { return b_; }
+  auto end() { return e_; }
+  auto end() const { return e_; }
+  bool empty() const { return b_ != e_; }
+
+  Iterator b_, e_;
+};
+using VarDictRangeIterable = RangeIterable<const Var::Dict>;
+
+inline static const JasSymbol symbol_var{'$'};
+inline static const JasSymbol symbol_op{'@'};
+
 using std::make_shared;
 using std::move;
 using OptionalEvbInfo = std::optional<EvaluableInfo>;
@@ -103,11 +151,10 @@ struct TranslatorImpl {
 
   void checkSupportedSpecifier(const StringView& str) {
     if (!isVariableLike(str)) {
-      throwIf<SyntaxError>(
-          isSpecifierLike(str) && !isSpecifier(str),
-          JASSTR("Following character `"), prefix::specifier,
-          JASSTR("` must be a specifier or supported function: ??"), str,
-          JASSTR("??"));
+      __jas_throw_if(SyntaxError, isSpecifierLike(str) && !isSpecifier(str),
+                     JASSTR("Following character `"), prefix::specifier,
+                     JASSTR("` must be a specifier or supported function: ??"),
+                     str, JASSTR("??"));
     }
   }
 
@@ -125,7 +172,7 @@ struct TranslatorImpl {
   }
 
   static std::optional<VariableInfo> extractStackVariables(
-      TranslatorImpl* translater, const String& key, const Var& evbExpr) {
+      TranslatorImpl* translator, const String& key, const Var& evbExpr) {
     if (key.size() > 1 && key[0] == prefix::variable) {
       String::size_type namePos = 1;
       VariableInfo::Type type = VariableInfo::Declaration;
@@ -134,18 +181,18 @@ struct TranslatorImpl {
         type = VariableInfo::Update;
       }
       return VariableInfo{key.substr(namePos),
-                          translater->translateImpl(evbExpr), type};
+                          translator->translateImpl(evbExpr), type};
     }
     return {};
   }
 
-  static StackVariablesPtr extractStackVariables(TranslatorImpl* translater,
+  static StackVariablesPtr extractStackVariables(TranslatorImpl* translator,
                                                  const Var& j) {
     StackVariables stackVariables;
     if (j.isDict()) {
       for (auto& [key, val] : j.asDict()) {
         if (key.size() > 1 && key[0] == prefix::variable) {
-          if (auto vi = extractStackVariables(translater, key, val);
+          if (auto vi = extractStackVariables(translator, key, val);
               vi.has_value()) {
             stackVariables.insert(move(*vi));
           }
@@ -159,12 +206,12 @@ struct TranslatorImpl {
     return {};
   }
 
-  template <class _op_translater, class _operation_type>
+  template <class _op_translator, class _operation_type>
   struct OperationTranslatorBase {
     using operation_type = _operation_type;
     static operation_type mapToEvbType(const String& sop) {
-      if (auto it = _op_translater::s2op_map().find(sop);
-          it != std::end(_op_translater::s2op_map())) {
+      if (auto it = _op_translator::s2op_map().find(sop);
+          it != std::end(_op_translator::s2op_map())) {
         return it->second;
       } else {
         return operation_type::invalid;
@@ -172,11 +219,11 @@ struct TranslatorImpl {
     }
   };
 
-  template <class _op_translater, class _operation_type>
+  template <class _op_translator, class _operation_type>
   struct OperatorTranslatorBase
-      : public OperationTranslatorBase<_op_translater, _operation_type> {
-    using _Base = OperationTranslatorBase<_op_translater, _operation_type>;
-    static EvaluablePtr translate(TranslatorImpl* translater,
+      : public OperationTranslatorBase<_op_translator, _operation_type> {
+    using _Base = OperationTranslatorBase<_op_translator, _operation_type>;
+    static EvaluablePtr translate(TranslatorImpl* translator,
                                   const Var& expression,
                                   const OptionalEvbInfo& evbInfo) {
       if (evbInfo) {
@@ -186,13 +233,13 @@ struct TranslatorImpl {
           Evaluables params;
           if (jevaluation.isList()) {
             for (auto& item : jevaluation.asList()) {
-              params.emplace_back(translater->translateImpl(item));
+              params.emplace_back(translator->translateImpl(item));
             }
           } else {
-            params.emplace_back(translater->translateImpl(jevaluation));
+            params.emplace_back(translator->translateImpl(jevaluation));
           }
           return makeOp(id, op, std::move(params),
-                        extractStackVariables(translater, expression));
+                        extractStackVariables(translator, expression));
         }
       }
       return {};
@@ -258,20 +305,20 @@ struct TranslatorImpl {
   };
 
   struct ListOpTranslator
-      : public OperationTranslatorBase<ListOpTranslator, lsot> {
+      : public OperationTranslatorBase<ListOpTranslator, lsaot> {
     static const auto& s2op_map() {
-      static std::map<String, lsot> _ = {
-          {keyword::any_of, lsot::any_of},
-          {keyword::all_of, lsot::all_of},
-          {keyword::none_of, lsot::none_of},
-          {keyword::count_if, lsot::count_if},
-          {keyword::filter_if, lsot::filter_if},
-          {keyword::transform, lsot::transform},
+      static std::map<String, lsaot> _ = {
+          {keyword::any_of, lsaot::any_of},
+          {keyword::all_of, lsaot::all_of},
+          {keyword::none_of, lsaot::none_of},
+          {keyword::count_if, lsaot::count_if},
+          {keyword::filter_if, lsaot::filter_if},
+          {keyword::transform, lsaot::transform},
       };
       return _;
     }
 
-    static EvaluablePtr translate(TranslatorImpl* translater,
+    static EvaluablePtr translate(TranslatorImpl* translator,
                                   const Var& expression,
                                   const OptionalEvbInfo& evbInfo) {
       EvaluablePtr output;
@@ -281,7 +328,7 @@ struct TranslatorImpl {
         }
         auto& [sop, jevaluable, id] = evbInfo.value();
         auto op = mapToEvbType(sop);
-        if (op == lsot::invalid) {
+        if (op == lsaot::invalid) {
           break;
         }
 
@@ -301,11 +348,11 @@ struct TranslatorImpl {
             jcond = jevaluable;
           }
           if (!jcond.isNull()) {
-            evbCond = translater->translateImpl(jcond);
+            evbCond = translator->translateImpl(jcond);
           }
 
-          throwIf<SyntaxError>(
-              !evbCond, JASSTR("Follow operation `"), sop,
+          __jas_throw_if(
+              SyntaxError, !evbCond, JASSTR("Follow operation `"), sop,
               JASSTR("` must be an evaluable condition with specifier `"),
               keyword::cond, JASSTR("` or `"), keyword::op, "`");
 
@@ -314,19 +361,19 @@ struct TranslatorImpl {
               jlistExpr.isNull()) {
             list = listFromCurrentContextData();
           } else {
-            list = translater->translateImpl(jlistExpr);
+            list = translator->translateImpl(jlistExpr);
           }
 
-          auto stackVariables = extractStackVariables(translater, expression);
+          auto stackVariables = extractStackVariables(translator, expression);
           output = makeOp(id, op, std::move(evbCond), std::move(list),
                           stackVariables);
           break;
         }
 
         if (jevaluable.isBool()) {
-          output =
-              makeOp(id, op, makeDV(jevaluable), listFromCurrentContextData(),
-                     extractStackVariables(translater, expression));
+          output = makeOp(id, op, makeConst(jevaluable),
+                          listFromCurrentContextData(),
+                          extractStackVariables(translator, expression));
         }
 
       } while (false);
@@ -369,20 +416,21 @@ struct TranslatorImpl {
         switch (typespecifier) {
           case JASSTR('d'):
           case JASSTR('i'):
-            return makeDV(std::stoi(realVal));
+            return makeConst(std::stoi(realVal));
           case JASSTR('f'):
-            return makeDV(std::stod(realVal));
+            return makeConst(std::stod(realVal));
           case JASSTR('l'):
-            return makeDV(static_cast<int64_t>(std::stoll(realVal)));
+            return makeConst(static_cast<int64_t>(std::stoll(realVal)));
           case JASSTR('s'):
-            return makeDV(std::move(realVal));
+            return makeConst(std::move(realVal));
           case JASSTR('b'):
             if (realVal == JASSTR("true")) {
-              return makeDV(true);
+              return makeConst(true);
             } else if (realVal == JASSTR("false")) {
-              return makeDV(false);
+              return makeConst(false);
             } else {
-              throw_<SyntaxError>("specifier %b cannot apply to ", realVal);
+              __jas_throw(SyntaxError, "specifier %b cannot apply to ",
+                          realVal);
             }
             break;
           default:
@@ -395,7 +443,7 @@ struct TranslatorImpl {
                             "]: ", e.what());
       }
     } while (false);
-    return makeDV(expr);
+    return makeConst(expr);
   }
 
   bool isContextFI(const StringView& module, const StringView& funcName) const {
@@ -406,7 +454,7 @@ struct TranslatorImpl {
   }
 
   struct FunctionTranslator {
-    static EvaluablePtr translate(TranslatorImpl* translater, const Var& expr,
+    static EvaluablePtr translate(TranslatorImpl* translator, const Var& expr,
                                   const OptionalEvbInfo& evbInfo) {
       auto splitModule = [](const StringView& str) {
         StringView funcName{str.data() + 1, str.size() - 1};
@@ -415,12 +463,12 @@ struct TranslatorImpl {
         if (dotPos != StringView::npos) {
           moduleName = funcName.substr(0, dotPos);
           funcName = funcName.substr(dotPos + 1);
-          throwIf<SyntaxError>(moduleName.empty(),
-                               "Module name must not empty `", str, "`");
-          throwIf<SyntaxError>(funcName.empty(),
-                               "FunctionInvocation name after "
-                               "module-separator(.) must not be empty `",
-                               str, "`");
+          __jas_throw_if(SyntaxError, moduleName.empty(),
+                         "Module name must not empty `", str, "`");
+          __jas_throw_if(SyntaxError, funcName.empty(),
+                         "FunctionInvocation name after "
+                         "module-separator(.) must not be empty `",
+                         str, "`");
           return std::make_pair(funcName, moduleName);
         } else {
           return std::make_pair(funcName, StringView{JASSTR("")});
@@ -436,37 +484,50 @@ struct TranslatorImpl {
       auto _makeFunction = [&]() -> EvaluablePtr {
         auto _translateParam = [&] {
           if (jParamExpr) {
-            return translater->translateImpl(*jParamExpr);
+            return translator->translateImpl(*jParamExpr);
           }
           return EvaluablePtr{};
         };
         auto _translateStackVars = [&] {
           if (jStackVarsExpr) {
-            return extractStackVariables(translater, *jStackVarsExpr);
+            return extractStackVariables(translator, *jStackVarsExpr);
           }
           return StackVariablesPtr{};
         };
 
-        if (translater->isContextFI(moduleName, funcName)) {
+        if (translator->isContextFI(moduleName, funcName)) {
           return makeSimpleFI<ContextFI>(
               id, String(funcName), _translateParam(), _translateStackVars());
-        } else if (translater->isJasFunction(moduleName, funcName)) {
+        } else if (translator->isJasFunction(moduleName, funcName)) {
           return makeSimpleFI<EvaluatorFI>(
               id, String(funcName), _translateParam(), _translateStackVars());
 
-        } else if (auto module = translater->moduleMgr_->getModule(moduleName);
-                   module) {
-          throwIf<SyntaxError>(!module->has(funcName),
-                               "There's no functio named `", funcName,
-                               "` in module `", moduleName, "`");
-
+        } else if (!moduleName.empty()) {
+          auto module = translator->moduleMgr_->getModule(moduleName);
+          __jas_throw_if(SyntaxError, !module, "Theres no module named `",
+                         moduleName, "` when invoking `", moduleName, ".",
+                         funcName, "`");
+          __jas_throw_if(SyntaxError, !module->has(funcName),
+                         "There's no function named `", funcName,
+                         "` in module `", moduleName, "`");
           return makeModuleFI(id, String(funcName), _translateParam(),
                               move(module), _translateStackVars());
+        } else {
+          auto module = translator->moduleMgr_->getModule(moduleName);
+          if (module && module->has(funcName)) {
+            return makeModuleFI(id, String(funcName), _translateParam(),
+                                move(module), _translateStackVars());
+          } else if (auto module =
+                         translator->moduleMgr_->findModuleByFuncName(funcName);
+                     module) {
+            return makeModuleFI(id, String(funcName), _translateParam(),
+                                move(module), _translateStackVars());
+          } else {
+            __jas_throw(SyntaxError, "Unknown reference to function: `@",
+                        funcName);
+          }
         }
-        throw_<SyntaxError>("Unknown reference to function: `@", moduleName,
-                            ".", funcName,
-                            "` Please add custom module to JAS for extending "
-                            "its functionality");
+
         return {};
       };
 
@@ -480,7 +541,7 @@ struct TranslatorImpl {
         }
       } else if (expr.isString()) {
         auto& str = expr.asString();
-        if (!str.empty() && translater->isSpecifierLike(str)) {
+        if (!str.empty() && translator->isSpecifierLike(str)) {
           std::tie(funcName, moduleName) = splitModule(str);
           return _makeFunction();
         }
@@ -491,10 +552,10 @@ struct TranslatorImpl {
 
   EvaluablePtr translateNoEffectOperations(const Var& expr) {
     if (expr.isDict() && expr.contains(keyword::noeval)) {
-      throwIf<SyntaxError>(expr.size() > 1, "Object must contain only ",
-                           "keyword `", keyword::noeval,
-                           "` and not evaluated expression");
-      return makeDV(expr.at(keyword::noeval));
+      __jas_throw_if(SyntaxError, expr.size() > 1, "Object must contain only ",
+                     "keyword `", keyword::noeval,
+                     "` and not evaluated expression");
+      return makeConst(expr.at(keyword::noeval));
     }
     return {};
   }
@@ -541,7 +602,7 @@ struct TranslatorImpl {
         break;
       }
 
-      return makeProp(expression.substr(1));
+      return makeVar(expression.substr(1));
     } while (false);
     return evb;
   }
@@ -598,7 +659,6 @@ struct TranslatorImpl {
         }
         ++fieldIt;
       }
-//      evb = makeModuleFI({}, JASSTR("dict"), )
       evb = makeVariableFieldQuery(move(varName), move(path));
     } while (false);
     return evb;
@@ -635,7 +695,7 @@ struct TranslatorImpl {
       return expression;
     }
 
-    if (isSpecifier(expression)) {
+    if (isVariableLike(expression)) {
       return expression;
     }
 
@@ -677,7 +737,8 @@ struct TranslatorImpl {
   }
 
   Var constructJAS(const String& specifier, const String& expression) {
-    if (isVariableLike(specifier) || isSpecifierLike(specifier)) {
+    if (isVariableLike(specifier) || isSpecifierLike(specifier) ||
+        isVariableLike(expression) || isSpecifierLike(expression)) {
       return Var::dict({{specifier, constructJAS(expression)}});
     }
     return {};
@@ -725,15 +786,15 @@ struct TranslatorImpl {
       if (!j.isDict()) {
         break;
       }
-      auto evbDict = makeEDict();
+      auto evbDict = makeEvbDict();
       String id;
       StackVariables stackVariables;
 
       for (auto& [key, jvalue] : j.asDict()) {
         if (key == keyword::id) {
-          throwIf<SyntaxError>(!jvalue.isString(),
-                               JASSTR("Following id specifier `"), key,
-                               JASSTR("` must be a string"));
+          __jas_throw_if(SyntaxError, !jvalue.isString(),
+                         JASSTR("Following id specifier `"), key,
+                         JASSTR("` must be a string"));
           evbDict->id = jvalue.asString();
         } else if (auto vi = extractStackVariables(this, key, jvalue);
                    vi.has_value()) {
@@ -749,8 +810,8 @@ struct TranslatorImpl {
       } else if (evbDict->id.empty() &&
                  std::all_of(
                      std::begin(evbDict->value), std::end(evbDict->value),
-                     [](auto&& e) { return isType<DirectVal>(e.second); })) {
-        evb = makeDV(j);
+                     [](auto&& e) { return isType<Constant>(e.second); })) {
+        evb = makeConst(j);
         break;
       }
 
@@ -770,38 +831,25 @@ struct TranslatorImpl {
     }
 
     if (std::all_of(std::begin(arr), std::end(arr),
-                    [](auto&& e) { return isType<DirectVal>(e); })) {
-      return makeDV(j);
+                    [](auto&& e) { return isType<Constant>(e); })) {
+      return makeConst(j);
     } else {
-      return makeEList(move(arr));
+      return makeEvbList(move(arr));
     }
   }
 
   EvaluablePtr translateImpl(const Var& expr) {
     for (auto translate : translateCallbacks_) {
-      if (auto evaled = (this->*translate)(expr)) {
-        return evaled;
+      if (auto evb = (this->*translate)(expr)) {
+        return evb;
       }
     }
     return {};
   }
 
-  void checkVersionCompatibility(const Var& jas) {
-    auto exprVer = jas.getAt(JASSTR("$jas.version")).getString();
-    if (!exprVer.empty()) {
-      auto gt = mdl::cif::gt_ver(Var::list({exprVer, jas::version})).getBool();
-      throwIf<SyntaxError>(
-          gt,
-          "Given JAS syntax has higher version than current JAS translater, "
-          "current[",
-          jas::version, "], given[", exprVer, "]");
-    }
-  }
-
   EvaluablePtr translate(const Var& jas, Translator::Strategy strategy) {
-    throwIf<SyntaxError>(jas.isNull(), JASSTR("Not an Evaluable: "),
-                         jas.dump());
-    checkVersionCompatibility(jas);
+    __jas_throw_if(SyntaxError, jas.isNull(), JASSTR("Not an Evaluable: "),
+                   jas.dump());
     if (strategy == Translator::Strategy::AllowShorthand) {
       auto _jas = reconstructJAS(jas);
       return translateImpl(_jas);
@@ -809,6 +857,71 @@ struct TranslatorImpl {
       return translateImpl(jas);
     }
   }
+
+  //  static bool isSymbol(CharType c) {
+  //    auto uc = static_cast<unsigned char>(c);
+  //    return ::isalnum(uc) || uc == '_';
+  //  }
+
+  //  EvaluablePtr parseVariable(const String& expr);
+  //  EvaluablePtr parseOperation(const String& expr);
+  //  EvaluablePtr parseText(const String& expr);
+
+  //  EvaluablePtr parse(const Var::String& key, const Var& val);
+
+  //  EvaluablePtr parseDict(const Var& jas) {
+  //    assert(jas.isDict());
+  //    VarDictRangeIterable operations = jas.asDict().equal_range(symbol_op);
+  //    if (!operations.empty()) {
+  //      auto it = operations.begin();
+  //      auto itOp = it++;
+  //      __jas_throw_if(SyntaxError, itOp != operations.end(),
+  //                     "In a json object, can not contain more than 2 "
+  //                     "operations, first is: ",
+  //                     it->first, " and ", itOp->first);
+  //      return parseOperation(itOp);
+  //    } else {
+  //      return parseEvbDict(jas);
+  //    }
+  //  }
+  //  EvaluablePtr parseList(const Var& jas) {
+  //    assert(jas.isList());
+  //    EvaluableList::value_type lst;
+  //    for (auto& item : jas.asList()) {
+  //      lst.push_back(translate(item));
+  //    }
+
+  //    if (std::all_of(std::begin(lst), std::end(lst),
+  //                    [](auto&& e) { return isType<Constant>(e); })) {
+  //      return makeConst(jas);
+  //    } else {
+  //      return makeEvbList(move(lst));
+  //    }
+  //  }
+
+  //  EvaluablePtr parse(const Var& jas) {
+  //    assert(jas.isString());
+  //    auto& str = jas.asString();
+  //    if (isVariableLike(str)) {
+  //      return parseVariable(str);
+  //    } else if (isSpecifierLike(str)) {
+  //      return parseOperation(str);
+  //    } else {
+  //      return parseText(str);
+  //    }
+  //  }
+
+  //  EvaluablePtr translate(const Var& jas) {
+  //    if (jas.isDict()) {
+  //      return parseDict(jas.asDict());
+  //    } else if (jas.isList()) {
+  //      return parseList(jas);
+  //    } else if (jas.isString()) {
+  //      return parse(jas.asString());
+  //    } else {
+  //      return makeConst(jas);
+  //    }
+  //  }
 };  // namespace jas
 
 static std::vector<StringView> split(StringView str, const String& delim) {
@@ -852,5 +965,5 @@ Translator::~Translator() {
   }
 }
 
-// namespace translater
+// namespace translator
 }  // namespace jas

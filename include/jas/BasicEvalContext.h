@@ -14,8 +14,8 @@ class BasicEvalContext : public EvalContextIF {
   std::vector<String> supportedFunctions() const override;
   bool functionSupported(const StringView& functionName) const override;
   Var invoke(const String& name, const Var& param) override;
-  Var variable(const String& refid) override;
-  Var setVariable(const String& name, Var val) override;
+  Var* variable(const String& refid) override;
+  Var* setVariable(const String& name, Var val) override;
   EvalContextPtr subContext(const String& ctxtID, const Var& input) override;
   Var findProperty(BasicEvalContext* ctxt, const String& name);
   String debugInfo() const override;

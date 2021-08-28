@@ -113,7 +113,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
     return ret;
   }
 
-  void eval(const DirectVal& val) override { os_ << val.value.dump(); }
+  void eval(const Constant& val) override { os_ << val.value.dump(); }
 
   void eval(const EvaluableDict& e) override {
     os_ << JASSTR("{");
@@ -158,12 +158,13 @@ class SyntaxValidatorImpl : public EvaluatorBase {
     os_ << JASSTR("(");
     if (op.params.size() >= 1) {
       if (!isType<Variable>(op.params.front())) {
+        evaluate(op.params.front());
         os_ << bookMarkError(
             strJoin("First argument of `", op.type, "` must be variable"));
       } else {
-        os_ << prefix::variable << op.params.front()->id << op.type;
+        os_ << prefix::variable << op.params.front()->id;
       }
-
+      os_ << op.type;
       if (op.params.size() >= 2) {
         _eval(op.params[1].get());
         if (op.params.size() > 2) {
@@ -200,7 +201,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
     } else {
       _eval(op.list.get());
     }
-    if (op.type != lsot::transform) {
+    if (op.type != lsaot::transform) {
       os_ << JASSTR(").satisfies(");
     } else {
       os_ << JASSTR(").with(");

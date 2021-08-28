@@ -14,8 +14,8 @@ class FunctionModuleIF {
  public:
   virtual ~FunctionModuleIF() = default;
   virtual String moduleName() const = 0;
-  virtual Var eval(const String& funcName, Var& evaluatedParam,
-                      SyntaxEvaluatorImpl*) = 0;
+  virtual Var eval(const String& funcName, Var evaluatedParam,
+                   SyntaxEvaluatorImpl*) = 0;
   virtual bool has(const StringView& funcName) const = 0;
   virtual void enumerateFuncs(FunctionNameList& funcName) const = 0;
 };
@@ -42,8 +42,8 @@ __mc_jas_exception(FunctionNotFoundError);
                           ", given: ", jparam.dump())
 
 #define __jas_ni_func_throw_invalidargs_if(cond, errmsg) \
-  throwIf<InvalidArgument>(cond, "function `", __func__, "`: ", errmsg)
+  __jas_throw_if(InvalidArgument, cond, "function `", __func__, "`: ", errmsg)
 
-#define __jas_func_throw_invalidargs_if(cond, errmsg, jparam)           \
-  throwIf<InvalidArgument>(cond, "function `", __func__, "`: ", errmsg, \
-                           ", given: ", jparam.dump())
+#define __jas_func_throw_invalidargs_if(cond, errmsg, jparam)                  \
+  __jas_throw_if(InvalidArgument, cond, "function `", __func__, "`: ", errmsg, \
+                 ", given: ", jparam.dump())

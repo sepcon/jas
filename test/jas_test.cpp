@@ -1,6 +1,4 @@
 
-#include "jas/JASFacade.h"
-
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -70,14 +68,14 @@ static int run_all_tests(const fs::path& testcase_dir) {
             }
           }
         } catch (const data_error& de) {
-          clogger() << "Failed to parse test case: " << de.what();
+          cloginfo() << "Failed to parse test case: " << de.what();
         }
       }
     }
   }
-  clogger() << "\nSUMARY:"
-            << "\nTotal passes: " << total_passes
-            << "\nTotal failed: " << total_failed;
+  cloginfo() << "\nSUMARY:"
+             << "\nTotal passes: " << total_passes
+             << "\nTotal failed: " << total_failed;
   return total_failed;
 }
 
@@ -160,15 +158,15 @@ static void run_test_case(const test_case& tc) {
 static void failed_test_case(const test_case& tc, const String& syntax,
                              const Var& observed, const String& reason) {
   ++total_failed;
-  clogger() << JASSTR("TC[") << tc.data_line_number
-            << JASSTR("][FAILED] - syntax: ") << syntax;
+  cloginfo() << JASSTR("TC[") << tc.data_line_number
+             << JASSTR("][FAILED] - syntax: ") << syntax;
   if (!observed.isNull()) {
-    clogger() << JASSTR(" - [expected]: ") << JsonTrait::dump(tc.expected)
-              << JASSTR(" - [observed]: ") << observed.dump();
+    cloginfo() << JASSTR(" - [expected]: ") << JsonTrait::dump(tc.expected)
+               << JASSTR(" - [observed]: ") << observed.dump();
   } else {
-    clogger() << " - [reason]: \n" << reason;
+    cloginfo() << " - [reason]: \n" << reason;
   }
-  clogger() << "\n";
+  cloginfo() << "\n";
 }
 
 static void success_test_case(const test_case& /*tc*/) { ++total_passes; }
@@ -190,13 +188,24 @@ static EvalContextPtr make_eval_ctxt(Json data) {
 
 }  // namespace jas
 
+#define _CRTDBG_MAP_ALLOC
+#include <crtdbg.h>
+#include <stdlib.h>
+
 using namespace jas;
+
+static void enableMemoryLeaksReport() {
+  _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
+  _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_DEBUG);
+}
+
 int main(int argc, char** argv) {
+  enableMemoryLeaksReport();
   CloggerSection test{JASSTR("JAS TEST")};
   if (argc == 2) {
     return jas::run_all_tests(argv[1]);
   } else {
-    clogger() << "ERROR: No test case dir specified!";
+    cloginfo() << "ERROR: No test case dir specified!";
     return -1;
   }
 }

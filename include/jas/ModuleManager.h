@@ -11,11 +11,12 @@ class ModuleManager {
   bool removeModule(const String& moduleName) noexcept;
   bool hasModule(const StringView& moduleName) const noexcept;
   FunctionModulePtr getModule(const StringView& moduleName);
+  FunctionModulePtr findModuleByFuncName(const StringView& funcName);
   bool hasFunction(const StringView& moduleName,
                    const StringView& funcName) noexcept;
   FunctionNameList enumerateFuncions();
-  Var invoke(const String& module, const String& funcName,
-                Var& evaluatedParam, SyntaxEvaluatorImpl*);
+  Var invoke(const String& module, const String& funcName, Var& evaluatedParam,
+             SyntaxEvaluatorImpl*);
   const ModuleMap& modules() const { return modules_; }
 
  private:

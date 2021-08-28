@@ -26,18 +26,16 @@ __mc_jas_exception(OutOfRange);
 
 //#undef __mc_jas_exception
 
-/// Exceptions
-template <class _exception, class... _args>
-void throwIf(bool cond, _args&&... args) {
-  if (cond) {
-    throw _exception{strJoin(std::forward<_args>(args)...)};
-  }
-}
-
 template <class _exception, class... _args>
 void throw_(_args&&... args) {
   _exception e{strJoin(std::forward<_args>(args)...)};
   throw e;
 }
+
+#define __jas_throw(ExceptionType, ...) throw_<ExceptionType>(__VA_ARGS__)
+#define __jas_throw_if(ExceptionType, condition, ...) \
+  if (condition) {                                    \
+    __jas_throw(ExceptionType, __VA_ARGS__);          \
+  }
 
 }  // namespace jas

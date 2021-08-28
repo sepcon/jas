@@ -14,7 +14,7 @@
 namespace jas {
 
 class Evaluable;
-struct DirectVal;
+struct Constant;
 struct EvaluableDict;
 struct EvaluableList;
 struct ArithmaticalOperator;
@@ -59,7 +59,7 @@ inline bool operator<(const String& name, const VariableInfo& vi) {
 class EvaluatorBase {
  public:
   virtual ~EvaluatorBase() = default;
-  virtual void eval(const DirectVal&) = 0;
+  virtual void eval(const Constant&) = 0;
   virtual void eval(const EvaluableDict&) = 0;
   virtual void eval(const EvaluableList&) = 0;
   virtual void eval(const ArithmaticalOperator&) = 0;
@@ -125,9 +125,9 @@ struct __StacklessEvaluableT : public __StacklessEvaluable {
   }
 };
 
-struct DirectVal : public __StacklessEvaluableT<DirectVal> {
+struct Constant : public __StacklessEvaluableT<Constant> {
   template <class T>
-  DirectVal(T&& v) : value(std::forward<T>(v)) {}
+  Constant(T&& v) : value(std::forward<T>(v)) {}
   Var value;
 };
 
@@ -338,7 +338,7 @@ struct ComparisonOperator : _OperatorBase<ComparisonOperator, cot> {
   using _OperatorBase<ComparisonOperator, cot>::_OperatorBase;
 };
 
-enum class lsot : char {
+enum class lsaot : char {
   any_of,
   all_of,
   none_of,
@@ -348,27 +348,27 @@ enum class lsot : char {
   invalid,
 };
 
-inline OStream& operator<<(OStream& os, lsot o) {
+inline OStream& operator<<(OStream& os, lsaot o) {
   switch (o) {
-    case lsot::any_of:
+    case lsaot::any_of:
       os << "any_of";
       break;
-    case lsot::all_of:
+    case lsaot::all_of:
       os << "all_of";
       break;
-    case lsot::none_of:
+    case lsaot::none_of:
       os << "none_of";
       break;
-    case lsot::count_if:
+    case lsaot::count_if:
       os << "count_if";
       break;
-    case lsot::filter_if:
+    case lsaot::filter_if:
       os << "filter_if";
       break;
-    case lsot::transform:
+    case lsaot::transform:
       os << "transform";
       break;
-    case lsot::invalid:
+    case lsaot::invalid:
       os << "invalid";
       break;
   }
@@ -376,14 +376,14 @@ inline OStream& operator<<(OStream& os, lsot o) {
 }
 
 struct ListAlgorithm : public __UseStackEvaluableT<ListAlgorithm> {
-  ListAlgorithm(String id, lsot t, EvaluablePtr c, EvaluablePtr list = {},
+  ListAlgorithm(String id, lsaot t, EvaluablePtr c, EvaluablePtr list = {},
                 StackVariablesPtr cp = {})
       : __UseStackEvaluableT<ListAlgorithm>(std::move(cp), std::move(id)),
         type(t),
         list(std::move(list)),
         cond(std::move(c)) {}
 
-  lsot type;
+  lsaot type;
   EvaluablePtr list;
   EvaluablePtr cond;
 };
@@ -433,8 +433,8 @@ struct Variable : public __StacklessEvaluableT<Variable> {
 };
 
 template <class T>
-inline auto makeDV(T&& val) {
-  return std::make_shared<DirectVal>(std::forward<T>(val));
+inline auto makeConst(T&& val) {
+  return std::make_shared<Constant>(std::forward<T>(val));
 }
 inline auto makeOp(String id, aot op, Evaluables params,
                    StackVariablesPtr cp = {}) {
@@ -456,7 +456,7 @@ inline auto makeOp(String id, cot op, Evaluables params,
   return std::make_shared<ComparisonOperator>(std::move(id), op,
                                               std::move(params), std::move(cp));
 }
-inline auto makeOp(String id, lsot op, EvaluablePtr cond, EvaluablePtr list,
+inline auto makeOp(String id, lsaot op, EvaluablePtr cond, EvaluablePtr list,
                    StackVariablesPtr cp = {}) {
   return std::make_shared<ListAlgorithm>(std::move(id), op, std::move(cond),
                                          std::move(list), std::move(cp));
@@ -476,18 +476,22 @@ inline auto makeModuleFI(String id, String name, EvaluablePtr param = {},
                                     std::move(param), std::move(mdl),
                                     std::move(cp));
 }
-inline auto makeProp(String propID) {
-  return std::make_shared<Variable>(std::move(propID));
+
+inline auto makeVar(String variableName) {
+  return std::make_shared<Variable>(std::move(variableName));
 }
+
 inline auto makeVariableFieldQuery(String name,
                                    std::vector<EvaluablePtr> paths) {
   return std::make_shared<VariableFieldQuery>(std::move(name),
                                               std::move(paths));
 }
-inline auto makeEDict(EvaluableDict::value_type v = {}) {
+
+inline auto makeEvbDict(EvaluableDict::value_type v = {}) {
   return std::make_shared<EvaluableDict>(std::move(v));
 }
-inline auto makeEList(EvaluableList::value_type v = {}) {
+
+inline auto makeEvbList(EvaluableList::value_type v = {}) {
   return std::make_shared<EvaluableList>(std::move(v));
 }
 

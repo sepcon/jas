@@ -16,7 +16,6 @@ using std::move;
 
 namespace func_name {
 using namespace std::string_view_literals;
-inline constexpr auto prop = JASSTR("prop");
 inline constexpr auto evchg = JASSTR("evchg");
 inline constexpr auto snchg = JASSTR("snchg");
 inline constexpr auto field = JASSTR("field");
@@ -164,16 +163,16 @@ Var HistoricalEvalContext::snchg(const Var& jpath) {
 
 Var HistoricalEvalContext::evchg(const Var& json) {
   __jas_func_throw_invalidargs_if(
-      !json.isString(), "property name must be non-empty string", json);
+      !json.isString(), "variable name must be non-empty string", json);
 
   auto propID = json.asString();
   __jas_ni_func_throw_invalidargs_if(propID.empty(),
-                                     "property name must not be empty");
+                                     "variable name must not be empty");
   Var changed = true;
 
-  if (auto itProp = variables_.find(propID); itProp != std::end(variables_)) {
+  if (auto itVar = variables_.find(propID); itVar != std::end(variables_)) {
     auto& levr = *lastEvalResult();
-    changed = levr.getAt(contextPath(propID)) != itProp->second;
+    changed = levr.getAt(contextPath(propID)) != itVar->second;
   } else if (parent_) {
     changed = parent()->evchg(propID);
   } else {
@@ -248,7 +247,7 @@ Var HistoricalEvalContext::last_eval(const Var& jVarName) {
   auto& lastEvals = *lastEvalResult();
   auto ctxtPath = contextPath(variableName);
   if (lastEvals.contains(ctxtPath)) {
-    return lastEvals.getPath(ctxtPath);
+    return lastEvals.getAt(ctxtPath);
   } else if (parent_) {
     return parent()->last_eval(jVarName);
   } else {
@@ -327,9 +326,9 @@ void HistoricalEvalContext::syncEvalResult() {
   if (!variables_.empty()) {
     auto& evr = *lastEvalResult();
     auto thisCtxtPath = contextPath();
-    for (auto& [prop, val] : variables_) {
-      if (!val.isNull()) {
-        evr[strJoin(thisCtxtPath, cstr::path_sep, prop)] = val;
+    for (auto& [var, val] : variables_) {
+      if (!val.isNull() && var.front() != TemporaryVariablePrefix) {
+        evr[strJoin(thisCtxtPath, cstr::path_sep, var)] = val;
       }
     }
   }

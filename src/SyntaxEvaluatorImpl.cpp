@@ -14,6 +14,7 @@
 #include "jas/OpTraits.h"
 #include "jas/String.h"
 #include "jas/SyntaxValidator.h"
+#include "jas/TypesName.h"
 
 #define lambda_on_this(method, ...) [&] { return method(__VA_ARGS__); }
 
@@ -49,51 +50,40 @@ Var transform(const Vars& list, _Callable&& transf) {
   return transformed;
 }
 
-static Var setVariable(const EvalContextPtr& ctxt, const String& propName,
-                       const Var& val) {
-  return ctxt->setVariable(propName, Var::ref(val));
+inline auto operator+(const Var::List& lhs, const Var::List& rhs) {
+  auto out = lhs;
+  out.insert(std::end(out), std::begin(rhs), std::end(rhs));
+  return out;
 }
 
-template <class _StdOperator, class _Params>
-static Var binaryOperationAccumulate(const _Params& evaluatedVals) {
-  throwIf<EvaluationError>(evaluatedVals.size() < 2,
-                           "Size must be greator than 2");
-
-  auto op = _StdOperator{};
-  auto it = std::begin(evaluatedVals);
-  Var e = *it;
-  throwIf<EvaluationError>(e.isNull(), "Evaluated to null");
-  auto result = e;
-  while (++it != std::end(evaluatedVals)) {
-    e = *it;
-    throwIf<EvaluationError>(e.isNull(), "Evaluated to null");
-    result = op(result, e);
-  }
-  return result;
+inline auto operator+(const Var::Dict& lhs, const Var::Dict& rhs) {
+  auto out = lhs;
+  out.insert(std::begin(rhs), std::end(rhs));
+  return out;
 }
 
 #define __MC_STACK_START(ctxtID, evb, ...) \
   stackPush(ctxtID, evb, ##__VA_ARGS__);   \
   try {
-#define __MC_STACK_END                              \
-  }                                                 \
-  catch (const StackUnwin<SyntaxError>& e) {        \
-    throw e;                                        \
-  }                                                 \
-  catch (const StackUnwin<EvaluationError>& e) {    \
-    throw e;                                        \
-  }                                                 \
-  catch (const StackUnwin<jas::Exception>& e) {     \
-    throw e;                                        \
-  }                                                 \
-  catch (jas::Exception & e) {                      \
-    evalThrow<jas::Exception>(e.details);           \
-  }                                                 \
-  catch (std::exception & e) {                      \
-    evalThrow<jas::Exception>(e.what());            \
-  }                                                 \
-  catch (...) {                                     \
-    evalThrow<jas::Exception>("Unknown exception"); \
+#define __MC_STACK_END                                     \
+  }                                                        \
+  catch (const StackUnwin<SyntaxError>& e) {               \
+    throw e;                                               \
+  }                                                        \
+  catch (const StackUnwin<EvaluationError>& e) {           \
+    throw e;                                               \
+  }                                                        \
+  catch (const StackUnwin<jas::Exception>& e) {            \
+    throw e;                                               \
+  }                                                        \
+  catch (jas::Exception & e) {                             \
+    stackUnwindThrow<jas::Exception>(e.details);           \
+  }                                                        \
+  catch (std::exception & e) {                             \
+    stackUnwindThrow<jas::Exception>(e.what());            \
+  }                                                        \
+  catch (...) {                                            \
+    stackUnwindThrow<jas::Exception>("Unknown exception"); \
   }
 
 #define __MC_STACK_END_RETURN(ret) __MC_STACK_END return ret;
@@ -102,7 +92,7 @@ static Var binaryOperationAccumulate(const _Params& evaluatedVals) {
 #define __MC_BASIC_OPERATION_EVAL_END(op)                           \
   }                                                                 \
   catch (const TypeError& e) {                                      \
-    evalThrow<EvaluationError>(                                     \
+    stackUnwindThrow<EvaluationError>(                              \
         "Evaluation Error: ", SyntaxValidator{}.generateSyntax(op), \
         " -> parameters of operation `", op.type,                   \
         "` must be same type and NOT null: ", e.details);           \
@@ -111,15 +101,14 @@ static Var binaryOperationAccumulate(const _Params& evaluatedVals) {
   __MC_BASIC_OPERATION_EVAL_END(op) return defaultRet;
 
 /// Exceptions
-template <class _Exception, typename... _Msg>
-void SyntaxEvaluatorImpl::evalThrowIf(bool cond, _Msg&&... msg) {
-  if (cond) {
-    throw_<StackUnwin<_Exception>>(generateBackTrace(strJoin(msg...)));
+
+#define __stackUnwindThrowIf(_Exception, cond, ...) \
+  if (cond) {                                       \
+    stackUnwindThrow<_Exception>(__VA_ARGS__);      \
   }
-}
 
 template <class _Exception, typename... _Msg>
-void SyntaxEvaluatorImpl::evalThrow(_Msg&&... msg) {
+void SyntaxEvaluatorImpl::stackUnwindThrow(_Msg&&... msg) {
   throw_<StackUnwin<_Exception>>(generateBackTrace(strJoin(msg...)));
 }
 
@@ -136,7 +125,7 @@ Var SyntaxEvaluatorImpl::evaluate(const Evaluable& e,
     e.accept(this);
     evaluated = stackTakeReturnedVal();
   } else {
-    throw_<SyntaxError>(validator.getReport());
+    __jas_throw(SyntaxError, validator.getReport());
   }
   return evaluated;
 }
@@ -163,7 +152,7 @@ SyntaxEvaluatorImpl::~SyntaxEvaluatorImpl() {
   }
 }
 
-void SyntaxEvaluatorImpl::eval(const DirectVal& v) {
+void SyntaxEvaluatorImpl::eval(const Constant& v) {
   stackReturn(Var::ref(v.value));
 }
 
@@ -185,11 +174,7 @@ void SyntaxEvaluatorImpl::eval(const EvaluableList& v) {
   auto evaluated = Var::list();
   auto itemIdx = 0;
   for (auto& val : v.value) {
-    try {
-      evaluated.add(_evalRet(val.get(), strJoin(itemIdx)));
-    } catch (const EvaluationError&) {
-      evaluated.add(Var{});
-    }
+    evaluated.add(_evalRet(val.get(), strJoin(itemIdx)));
   }
   stackReturn(move(evaluated));
 }
@@ -216,15 +201,16 @@ void SyntaxEvaluatorImpl::eval(const ArithmaticalOperator& op) {
       case aot::modulus:
         return applyMultiBinOp<aot, aot::modulus, std::modulus>(evaluatedVals);
       case aot::divides:
-        return binaryOperationAccumulate<std::divides<>>(evaluatedVals);
+        return applyMultiBinOp<aot, aot::divides, std::divides>(evaluatedVals);
       case aot::minus:
-        return binaryOperationAccumulate<std::minus<>>(evaluatedVals);
+        return applyMultiBinOp<aot, aot::minus, std::minus>(evaluatedVals);
       case aot::multiplies:
-        return binaryOperationAccumulate<std::multiplies<>>(evaluatedVals);
+        return applyMultiBinOp<aot, aot::multiplies, std::multiplies>(
+            evaluatedVals);
       case aot::negate:
         return applyUnaryOp<aot, aot::negate, std::negate>(evaluatedVals);
       case aot::plus:
-        return binaryOperationAccumulate<std::plus<>>(evaluatedVals);
+        return applyMultiBinOp<aot, aot::plus, std::plus>(evaluatedVals);
       default:
         return Var{};
     }
@@ -239,47 +225,50 @@ void SyntaxEvaluatorImpl::eval(const ArthmSelfAssignOperator& op) {
   __MC_BASIC_OPERATION_EVAL_START(op)
   evaluateVariables(op.stackVariables);
   auto var = op.params.front();
-  auto val = _evalRet(var.get());
-  evalThrowIf<EvaluationError>(val.isNull(), "Variable ", var->id,
-                               " has not initialized yet");
+  auto varVal = _evalRet(var.get());
+  __stackUnwindThrowIf(EvaluationError, varVal.isNull(), "Variable ", var->id,
+                       " has not initialized yet");
   auto paramVal = _evalRet(op.params.back().get());
-  evalThrowIf<EvaluationError>(paramVal.isNull(), "Parameter to operator `",
-                               op.type, "` evaluated to null");
+  __stackUnwindThrowIf(EvaluationError, paramVal.isNull(),
+                       "Parameter to operator `", op.type,
+                       "` evaluated to null");
 
+  varVal.detach();
+  std::vector<Var> operands = {varVal, paramVal};
+  Var result;
   switch (op.type) {
     case asot::s_plus:
-      val.assign(val + paramVal);
+      result = applySingleBinOp<asot, asot::s_plus, std::plus>(operands);
       break;
     case asot::s_minus:
-      val.assign(val - paramVal);
+      result = applySingleBinOp<asot, asot::s_minus, std::minus>(operands);
       break;
     case asot::s_multiplies:
-      val.assign(val * paramVal);
+      result =
+          applySingleBinOp<asot, asot::s_multiplies, std::multiplies>(operands);
       break;
     case asot::s_divides:
-      val.assign(val / paramVal);
+      result = applySingleBinOp<asot, asot::s_divides, std::divides>(operands);
       break;
     case asot::s_modulus: {
-      val.assign(applySingleBinOp<asot, asot::s_modulus, std::modulus>(
-          Vars{val, paramVal}));
+      result = applySingleBinOp<asot, asot::s_modulus, std::modulus>(operands);
     } break;
     case asot::s_bit_and: {
-      val.assign(applySingleBinOp<asot, asot::s_bit_and, std::bit_and>(
-          Vars{val, paramVal}));
+      result = applySingleBinOp<asot, asot::s_bit_and, std::bit_and>(operands);
     } break;
     case asot::s_bit_or: {
-      val.assign(applySingleBinOp<asot, asot::s_bit_or, std::bit_or>(
-          Vars{val, paramVal}));
+      result = applySingleBinOp<asot, asot::s_bit_or, std::bit_or>(operands);
     } break;
     case asot::s_bit_xor: {
-      val.assign(applySingleBinOp<asot, asot::s_bit_xor, std::bit_xor>(
-          Vars{val, paramVal}));
+      result = applySingleBinOp<asot, asot::s_bit_xor, std::bit_xor>(operands);
     } break;
     default:
-      throw_<EvaluationError>("Unexpected operator");
+      __jas_throw(EvaluationError, "Unexpected operator");
       break;
   }
-  stackReturn(move(val), op);
+
+  varVal.assign(move(result));
+  stackReturn(move(varVal), op);
   __MC_BASIC_OPERATION_EVAL_END(op)
 }
 
@@ -349,37 +338,38 @@ void SyntaxEvaluatorImpl::eval(const ListAlgorithm& op) {
     vlist = _evalRet(op.list.get());
   }
 
-  evalThrowIf<EvaluationError>(
-      !vlist.isList(),
+  __stackUnwindThrowIf(
+      EvaluationError, !vlist.isList(),
       "`@list` input of list operation was not evaluated to array type");
 
   auto& list = vlist.asList();
   int itemIdx = 0;
   auto eval_impl = [this, &itemIdx, &op](const Var& data) {
     auto evaluated = _evalRet(op.cond.get(), strJoin(itemIdx++), data);
-    evalThrowIf<EvaluationError>(
-        !evaluated.isBool(), "Invalid param type > operation: ", syntaxOf(op),
-        "` > expected: `boolean` > real_val: `", evaluated.dump(), "`");
+    __stackUnwindThrowIf(EvaluationError, !evaluated.isBool(),
+                         "Invalid param type > operation: ", syntaxOf(op),
+                         "` > expected: `boolean` > real_val: `",
+                         evaluated.dump(), "`");
     return evaluated.getValue<bool>();
   };
 
   switch (op.type) {
-    case lsot::any_of:
+    case lsaot::any_of:
       finalEvaled = std::any_of(std::begin(list), std::end(list), eval_impl);
       break;
-    case lsot::all_of:
+    case lsaot::all_of:
       finalEvaled = std::all_of(std::begin(list), std::end(list), eval_impl);
       break;
-    case lsot::none_of:
+    case lsaot::none_of:
       finalEvaled = std::none_of(std::begin(list), std::end(list), eval_impl);
       break;
-    case lsot::count_if:
+    case lsaot::count_if:
       finalEvaled = std::count_if(std::begin(list), std::end(list), eval_impl);
       break;
-    case lsot::filter_if:
+    case lsaot::filter_if:
       finalEvaled = filter_if(list, eval_impl);
       break;
-    case lsot::transform:
+    case lsaot::transform:
       finalEvaled = transform(list, [this, &itemIdx, &op](const Var& data) {
         return _evalRet(op.cond.get(), strJoin(itemIdx++), data);
       });
@@ -420,28 +410,36 @@ void SyntaxEvaluatorImpl::eval(const VariableFieldQuery& query) {
   auto& varname = query.id;
   auto var = _queryOrEvalVariable(varname);
   do {
-    if (var.isNull()) {
+    if (var->isNull()) {
       stackReturn(Var{});
       break;
     }
 
-    const Var* pevaluated = &var;
+    auto dest = *var;
     for (auto& evbField : query.field_path) {
       auto field = _evalRet(evbField.get());
-      evalThrowIf<EvaluationError>(!field.isString(),
-                                   "Cannot evaluated to a valid path");
-      pevaluated = &(pevaluated->at(field.getString()));
+      if (field.isString()) {
+        dest = dest.getAt(field.asString());
+      } else if (field.isInt()) {
+        dest = dest.getAt(field.getValue<size_t>());
+      } else {
+        stackUnwindThrow<EvaluationError>("Cannot evaluated to a valid path: ",
+                                          field.dump());
+      }
+      if (dest.isNull()) {
+        break;
+      }
     }
-    stackReturn(*pevaluated);
+    stackReturn(move(dest));
   } while (false);
 }
 
 void SyntaxEvaluatorImpl::eval(const Variable& prop) {
-  stackReturn(_queryOrEvalVariable(prop.id));
+  stackReturn(*_queryOrEvalVariable(prop.id));
 }
 
-Var SyntaxEvaluatorImpl::_queryOrEvalVariable(const String& variableName) {
-  Var val;
+Var* SyntaxEvaluatorImpl::_queryOrEvalVariable(const String& variableName) {
+  Var* val = nullptr;
   try {
     val = stackTopContext()->variable(variableName);
   } catch (const EvaluationError&) {
@@ -453,13 +451,15 @@ Var SyntaxEvaluatorImpl::_queryOrEvalVariable(const String& variableName) {
       if (auto itProp = it->variables->find(variableName);
           itProp != std::end(*it->variables)) {
         auto& varInfo = *itProp;
-        evalThrowIf<EvaluationError>(varInfo.state == VariableInfo::Evaluating,
-                                     "Cyclic reference detected on variable: $",
-                                     variableName);
+        __stackUnwindThrowIf(
+            EvaluationError, varInfo.state == VariableInfo::Evaluating,
+            "Cyclic reference detected on variable: $", variableName);
         val = evaluateSingleVar(it->context, variableName, varInfo);
         break;
       }
     }
+    __jas_throw_if(EvaluationError, !val, "Unknown reference to variable `$",
+                   variableName, "`");
   }
   return val;
 }
@@ -482,7 +482,7 @@ Var SyntaxEvaluatorImpl::_evalRet(const Evaluable* e, String ctxtID,
     } else {
       e->accept(this);
       std::swap(evaluated, stackReturnedVal());
-      if (!isType<DirectVal>(e)) {
+      if (!isType<Constant>(e)) {
         stackDebugReturnVal(evaluated, e);
       }
     }
@@ -519,7 +519,7 @@ void SyntaxEvaluatorImpl::stackReturn(Var val) {
 
 void SyntaxEvaluatorImpl::stackReturn(Var val, const Evaluable& ev) {
   if (!ev.id.empty()) {
-    setVariable(stackTopContext(), ev.id, val);
+    stackTopContext()->setVariable(ev.id, val);
   }
   stackReturn(move(val));
 }
@@ -528,7 +528,7 @@ void SyntaxEvaluatorImpl::stackDebugReturnVal(const Var& e,
                                               const Evaluable* evb) {
   if (dbCallback_ && evb) {
     auto addUseCount = [&](auto&& syntax) {
-#ifndef __JAS_DEEP_DEBUG
+#ifdef __JAS_DEEP_DEBUG
       if (isType<Variable>(evb)) {
         return strJoin(syntax, std::hex, "  (", e.address(),
                        " - ref:", e.useCount(), ")");
@@ -577,17 +577,17 @@ const EvalContextPtr& SyntaxEvaluatorImpl::stackRootContext() {
   return stack_.front().context;
 }
 
-Var SyntaxEvaluatorImpl::evaluateSingleVar(const EvalContextPtr& ctxt,
-                                           const String& varname,
-                                           const VariableInfo& vi) {
+Var* SyntaxEvaluatorImpl::evaluateSingleVar(const EvalContextPtr& ctxt,
+                                            const String& varname,
+                                            const VariableInfo& vi) {
   vi.state = VariableInfo::Evaluating;
   auto val = _evalRet(vi.variable.get());
   vi.state = VariableInfo::Evaluated;
   if (vi.type == VariableInfo::Declaration) {
-    return setVariable(ctxt, varname, move(val));
+    return ctxt->setVariable(varname, move(val));
   } else {
     auto var = ctxt->variable(varname);
-    var.assign(move(val));
+    var->assign(move(val));
     return var;
   }
 }
@@ -626,26 +626,19 @@ Var SyntaxEvaluatorImpl::applyOp(const _Params& frame) {
   Var firstEvaluated = frame.front();
   return firstEvaluated.visitValue(
       [&frame, this](auto&& val) {
-        auto _throwNotApplicableErr = [&] {
-          evalThrow<EvaluationError>("Operator ", _optype_val,
-                                     " is not applicable on type");
-        };
         using ValType = std::decay_t<decltype(val)>;
-        if constexpr (!op_traits::operationSupported<ValType>(_optype_val)) {
-          if constexpr (!std::is_floating_point_v<ValType>) {
-            _throwNotApplicableErr();
-          }
-          if constexpr (op_traits::operationSupported<Var::Int>(_optype_val)) {
-            return _applier_impl<Var::Int, _std_op<Var::Int>, _Params>::apply(
-                frame);
-          } else {
-            _throwNotApplicableErr();
-          }
-        } else {
+        auto _throwNotApplicableErr = [&] {
+          stackUnwindThrow<TypeError>(
+              "Operator ", _optype_val,
+              " is not applicable on type: ", typeNameOf(val));
+        };
+        if constexpr (op_traits::operationSupported<ValType>(_optype_val)) {
           return _applier_impl<ValType, _std_op<ValType>, _Params>::apply(
               frame);
+        } else {
+          _throwNotApplicableErr();
+          return Var{};
         }
-        return Var{};
       },
       true);
 }
@@ -665,10 +658,10 @@ Var SyntaxEvaluatorImpl::evaluateOperator(const _Operation& op,
 
 template <class _compare_method, size_t expected_count, class _operation>
 void SyntaxEvaluatorImpl::validateParamCount(const _operation& o) {
-  evalThrowIf<SyntaxError>(_compare_method{}(o.params.size(), expected_count),
-                           "Error: Invalid param count of `", o.type,
-                           "` Expected: ", expected_count,
-                           " - Real: ", o.params.size());
+  __stackUnwindThrowIf(
+      SyntaxError, _compare_method{}(o.params.size(), expected_count),
+      "Error: Invalid param count of `", o.type, "` Expected: ", expected_count,
+      " - Real: ", o.params.size());
 }
 
 template <class _Operation>

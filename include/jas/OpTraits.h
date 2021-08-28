@@ -68,17 +68,18 @@ struct OperatorsSupported<bool>
             __supportOps(asot::s_bit_and, asot::s_bit_or, asot::s_bit_xor),
             __SP_LOT_ALL, __SP_COT_ALL> {};
 
-template <typename T>
-struct OperatorsSupported<T, std::enable_if_t<std::is_integral_v<T>, bool>>
+template <>
+struct OperatorsSupported<Number>
     : __OSC<__SP_AOT_ALL, __SP_ASOT_ALL, __SP_LOT_ALL, __SP_COT_ALL> {};
 
-template <typename T>
-struct OperatorsSupported<T,
-                          std::enable_if_t<std::is_floating_point_v<T>, bool>>
-    : __OSC<__supportOps(aot::plus, aot::minus, aot::multiplies, aot::divides),
-            __supportOps(asot::s_plus, asot::s_minus, asot::s_multiplies,
-                         asot::s_divides),
-            __SP_LOT_ALL, __SP_COT_ALL> {};
+template <>
+struct OperatorsSupported<Var::List>
+    : __OSC<__supportOps(aot::plus), __supportOps(asot::s_plus), __SP_LOT_NONE,
+            __SP_COT_ALL> {};
+template <>
+struct OperatorsSupported<Var::Dict>
+    : __OSC<__supportOps(aot::plus), __supportOps(asot::s_plus), __SP_LOT_NONE,
+            __SP_COT_ALL> {};
 
 template <class T, typename>
 struct OperatorsSupported

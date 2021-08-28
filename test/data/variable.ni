@@ -9,3 +9,7 @@
 // $a cyclic reference with $b
 {"$b:@plus":["$a", 2],"$a:@plus":["$b", 1]}
 {"@exception": "EvaluationError"}
+{"$arr":[1,2,3], "@return": "$arr[3]"}
+null
+{"$field_arr":"arr","$item3_idx":2,"$object":{"arr":[{"name":"item1"},{"name":"item2"},{"name":"item3"}]},"myquery":"$object[$field_arr/$item3_idx/name]"}
+{"myquery":"item3"}

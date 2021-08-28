@@ -25,7 +25,7 @@ static JASFacade& jasFacade() {
 
 void showHelp(int exitCode = -1) {
   CloggerSection showTitleSct{JASE_TITLE};
-  clogger() << JASSTR(
+  cloginfo() << JASSTR(
       R"(JASE - JAS Evaluator: Parse jas.dat file that contains jas syntax and data for evaluation and show the
 evaluated result!
 
@@ -47,7 +47,7 @@ Usage2: jase.exe [--help|--keywords|--version]
 template <class... Msgs>
 void exitIf(bool condition, const Msgs&... msg) {
   if (condition) {
-    auto clg = clogger();
+    auto clg = cloginfo();
     clg << "ERROR: ";
     (clg << ... << msg);
     exit(-1);
@@ -69,35 +69,35 @@ void showSupportedKeywords() {
     maxLen = maxLen < MIN_COLUMN_WIDTH ? MIN_COLUMN_WIDTH : maxLen;
     for (auto& item : sequence) {
       ++i;
-      __clogger << setiosflags(ios::left) << setw(maxLen + 2)
+      __jascout << setiosflags(ios::left) << setw(maxLen + 2)
                 << strJoin(prefix, item);
       if (i % 4 == 0) {
-        __clogger << "\n";
+        __jascout << "\n";
       }
     }
     // For odd list.count, we don't have last new line, then put one here
     if (i % 4 != 0) {
-      __clogger << "\n";
+      __jascout << "\n";
     }
   };
 
   if (auto& evbSpecifiers = Translator::evaluableSpecifiers();
       !evbSpecifiers.empty()) {
-    clogger() << "\nBuilt-in operators:";
+    cloginfo() << "\nBuilt-in operators:";
     displaySequence(evbSpecifiers, "");
   }
 
   if (auto historicalContextFncs = ctxt.supportedFunctions();
       !historicalContextFncs.empty()) {
-    clogger() << "\nHistoricalContext's Functions:";
+    cloginfo() << "\nHistoricalContext's Functions:";
     displaySequence(historicalContextFncs, prefix::specifier);
   }
 
   for (auto& [name, module] : jasFacade().getModuleMgr()->modules()) {
-    clogger() << "\n"
-              << (name.empty() ? JASSTR("Global")
-                               : strJoin("Module `", name, "`"))
-              << JASSTR(" functions:");
+    cloginfo() << "\n"
+               << (name.empty() ? JASSTR("Global")
+                                : strJoin("Module `", name, "`"))
+               << JASSTR(" functions:");
     FunctionNameList funcs;
     module->enumerateFuncs(funcs);
     displaySequence(funcs, prefix::specifier);
@@ -112,10 +112,10 @@ void checkInfoQueryInfoOption(const String& argv1) {
   } else if (argv1 == JASSTR("--help")) {
     showHelp(0);
   } else if (argv1 == JASSTR("--version")) {
-    clogger() << jas::version;
+    cloginfo() << jas::version;
     exit(0);
   } else if (argv1.size() > 2 && argv1.find(JASSTR("--")) != String::npos) {
-    clogger() << "Unknown option: " << argv1;
+    cloginfo() << "Unknown option: " << argv1;
     showHelp();
   }
 }
@@ -145,10 +145,10 @@ int main(int argc, char** argv) {
   auto jexpression = JsonTrait::parse(strExpression);
   if (getline(ifs, strCurrentInput)) {
     if (!getline(ifs, strLastInput)) {
-      clogger() << "No last input data";
+      cloginfo() << "No last input data";
     }
   } else {
-    clogger() << "No input data";
+    cloginfo() << "No input data";
   }
 
   auto jcurrentInput = JsonTrait::parse(strCurrentInput);
@@ -165,40 +165,40 @@ int main(int argc, char** argv) {
 
     HistoricalEvalContext::EvaluatedVariablesPtr lastEvalResult;
     if (fs::exists(lastEvalResultFile, ec)) {
-      clogger() << "Load evaluation result from " << lastEvalResultFile;
+      cloginfo() << "Load evaluation result from " << lastEvalResultFile;
       Ifstream lerifs{lastEvalResultFile};
       historicalContext->loadEvaluationResult(lerifs);
     }
     {
-      clogger() << "JAS reconstructed: "
-                << jasFacade()
-                       .getParser()
-                       ->reconstructJAS(historicalContext, jexpression)
-                       .toJson();
-
       jasFacade().setContext(historicalContext);
+      cloginfo() << "JAS reconstructed: "
+                 << jasFacade()
+                        .getParser()
+                        ->reconstructJAS(historicalContext, jexpression)
+                        .toJson();
       jasFacade().setExpression(jexpression);
 
       CloggerSection transformSyntaxSct(JASSTR("Transformed syntax"));
-      clogger() << jasFacade().getTransformedSyntax();
+      cloginfo() << jasFacade().getTransformedSyntax();
     }
-    {
+    try {
       CLoggerTimerSection evalResultSct(JASSTR("Evaluation result"));
       Ofstream debugLogFileStream{debugLogFile};
       jasFacade().setDebugCallback([&debugLogFileStream](const auto& msg) {
         debugLogFileStream << msg << "\n";
       });
-
       auto evaluated = jasFacade().evaluate();
-      clogger() << (evaluated.toJson());
+      cloginfo() << (evaluated.toJson());
+    } catch (const jas::Exception& e) {
+      clogerr() << "ERROR: " << e.what();
     }
 
     Ofstream lastResultFileStream{lastEvalResultFile};
     if (historicalContext->saveEvaluationResult(lastResultFileStream)) {
-      clogger() << "Result saved to " << lastEvalResultFile;
+      cloginfo() << "Result saved to " << lastEvalResultFile;
     }
   } catch (const Exception& e) {
-    clogger() << "ERROR: " << e.what();
+    clogerr() << "ERROR: " << e.what();
     exit(-1);
   }
 

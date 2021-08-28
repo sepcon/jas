@@ -10,5 +10,3 @@ true
 false
 {"@plus": [10, "@field:nothing"]}
 {"@exception":"EvaluationError"}
-{"@plus": [{}, {}]}
-{"@exception":"EvaluationError"}

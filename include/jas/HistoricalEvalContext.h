@@ -19,6 +19,8 @@ class HistoricalEvalContext : public BasicEvalContext {
     SnapshotIdxMax,
   };
 
+  static const constexpr auto TemporaryVariablePrefix = JASSTR('.');
+
   HistoricalEvalContext(HistoricalEvalContext* p = nullptr,
                         Var currentSnapshot = {}, Var lastSnapshot = {},
                         String id = {});

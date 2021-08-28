@@ -1,0 +1,6 @@
+{"$data":{"nguyen":{"van":"con"}},"@return":"$data[@field:key1/@field:key2]"}
+{"key1": "nguyen", "key2": "van"}
+"con"
+{"$$data":{"nguyen":{"van":"con"}}, "return":["var:$data[@field:key1/@field:key2]"]}
+{"key1": "nguyen", "key2": "van"}
+{"return":[{"var":"con"}]}

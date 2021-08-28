@@ -26,7 +26,7 @@ using std::make_shared;
 
 __list_func(append, params) {
   __list_check_standard_params(params);
-  auto &lst = detach_ref(params[0]);
+  auto &lst = variable_detach(params[0]);
   auto size = params.size();
   for (size_t i = 1; i < size; ++i) {
     lst.add(params.at(i));
@@ -36,7 +36,7 @@ __list_func(append, params) {
 
 __list_func(extend, params) {
   __list_check_standard_params(params);
-  auto &theList = detach_ref(params[0]).asList();
+  auto &theList = variable_detach(params[0]).asList();
   auto size = params.size();
   for (size_t i = 1; i < size; ++i) {
     if (params[i].isList()) {
@@ -51,7 +51,7 @@ __list_func(extend, params) {
 
 __list_func(remove, params) {
   __list_check_standard_params(params);
-  auto &theList = detach_ref(params[0]).asList();
+  auto &theList = variable_detach(params[0]).asList();
   auto &tbRemoved = params[1];
   auto itRemoved = std::remove(begin(theList), end(theList), tbRemoved);
   if (itRemoved != end(theList)) {
@@ -74,7 +74,7 @@ __list_func(pop, params) {
       strJoin("Out of range access, list size is ", params[0].size()),
       params[1]);
 
-  auto &theList = detach_ref(params[0]).asList();
+  auto &theList = variable_detach(params[0]).asList();
   auto rmItem = std::move(theList[rmPos]);
   theList.erase(std::begin(theList) + rmPos);
   return rmItem;
@@ -84,7 +84,7 @@ __list_func(insert, params) {
   __list_check_standard_params(params);
   __jas_ni_func_throw_invalidargs_if(
       params.size() != 3, "Expect 3 arguments [$thelist, insertPos, value]");
-  auto &internalList = detach_ref(params[0]).asList();
+  auto &internalList = variable_detach(params[0]).asList();
   auto &insertPos = params[1];
   __jas_func_throw_invalidargs_if(
       !insertPos.isNumber() ||
@@ -97,10 +97,35 @@ __list_func(insert, params) {
   return true;
 }
 
+__list_func(clear, varList) {
+  __list_throw_if_not_is_list(varList);
+  variable_detach(varList).clear();
+  return varList;
+}
+
+__list_func(is_empty, varList) {
+  __list_throw_if_not_is_list(varList);
+  return varList.empty();
+}
+
+__list_func(contains, params) {
+  using namespace std;
+  __list_check_standard_params(params);
+  auto &varList = params[0].asList();
+
+  return find(begin(varList), end(varList), params[1]) != end(varList);
+}
+
 __list_func(len, varList) {
   __list_throw_if_not_is_list(varList);
   return varList.size();
 }
+
+__list_func(size, varList) {
+  __list_throw_if_not_is_list(varList);
+  return varList.size();
+}
+
 __list_func(count, params) {
   __list_check_standard_params(params);
   auto &theList = params[0].asList();
@@ -109,23 +134,31 @@ __list_func(count, params) {
 
 __list_func(sort, varList) {
   __list_throw_if_not_is_list(varList);
-  auto &internalList = detach_ref(varList).asList();
+  auto &internalList = variable_detach(varList).asList();
   std::sort(begin(internalList), end(internalList));
   return varList;
 }
 __list_func(unique, input) {
   __list_throw_if_not_is_list(input);
-  auto &theList = detach_ref(input).asList();
+  auto &theList = variable_detach(input).asList();
   theList.erase(std::unique(begin(theList), end(theList)), end(theList));
   return input;
 }
 
 __module_class_begin(list){
-    __module_register_func(list, append), __module_register_func(list, extend),
-    __module_register_func(list, remove), __module_register_func(list, insert),
-    __module_register_func(list, sort),   __module_register_func(list, count),
-    __module_register_func(list, unique), __module_register_func(list, len),
+    __module_register_func(list, append),
+    __module_register_func(list, contains),
+    __module_register_func(list, extend),
+    __module_register_func(list, remove),
+    __module_register_func(list, insert),
+    __module_register_func(list, sort),
+    __module_register_func(list, count),
+    __module_register_func(list, unique),
+    __module_register_func(list, len),
     __module_register_func(list, pop),
+    __module_register_func(list, size),
+    __module_register_func(list, clear),
+    __module_register_func(list, is_empty),
 } __module_class_end(list)
 
 }  // namespace list

@@ -9,13 +9,12 @@ SyntaxEvaluator::SyntaxEvaluator(ModuleManager* moduleMgr)
 
 SyntaxEvaluator::~SyntaxEvaluator() { delete impl_; }
 
-Var SyntaxEvaluator::evaluate(const Evaluable& e,
-                                 EvalContextPtr rootContext) {
+Var SyntaxEvaluator::evaluate(const Evaluable& e, EvalContextPtr rootContext) {
   return impl_->evaluate(e, move(rootContext));
 }
 
 Var SyntaxEvaluator::evaluate(const EvaluablePtr& e,
-                                 EvalContextPtr rootContext) {
+                              EvalContextPtr rootContext) {
   return impl_->evaluate(e, move(rootContext));
 }
 void SyntaxEvaluator::setDebugInfoCallback(

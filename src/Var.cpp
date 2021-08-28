@@ -1,6 +1,10 @@
+#include "jas/Var.h"
+
+#include <charconv>
+#include <optional>
 #include <variant>
 
-#include "jas/Var.h"
+#include "jas/Number.h"
 
 namespace jas {
 using std::make_shared;
@@ -16,8 +20,7 @@ using List = Var::List;
 using Dict = Var::Dict;
 using Ref = Var::Ref;
 
-using ValueTypeBase =
-    std::variant<Null, Bool, Int, Double, String, List, Dict, Ref>;
+using ValueTypeBase = std::variant<Null, Bool, Number, String, List, Dict, Ref>;
 struct Var::ValueType : public ValueTypeBase {
   using _Base = ValueTypeBase;
   using _Base::_Base;
@@ -34,8 +37,24 @@ struct Var::ValueType : public ValueTypeBase {
   }
 };
 
+static bool _isNumber(const StringView &snum) {
+  return std::all_of(snum.begin(), snum.end(), ::isdigit);
+}
+template <class _NumberType>
+static std::optional<_NumberType> _toNumber(const StringView &snum) {
+  _NumberType out;
+  const std::from_chars_result result =
+      std::from_chars(snum.data(), snum.data() + snum.size(), out);
+  if (result.ec == std::errc::invalid_argument ||
+      result.ec == std::errc::result_out_of_range) {
+    return std::nullopt;
+  }
+
+  return out;
+}
+
 template <class _Var, class _Iterator>
-static _Var *find(_Var *j, _Iterator beg, _Iterator end) {
+static _Var *_find(_Var *j, _Iterator beg, _Iterator end) {
   assert(j);
   for (; beg != end; ++beg) {
     if (j->isDict()) {
@@ -47,81 +66,36 @@ static _Var *find(_Var *j, _Iterator beg, _Iterator end) {
         j = nullptr;
         break;
       }
+    } else if (j->isList()) {
+      auto optIdx = _toNumber<size_t>(*beg);
+      if (!optIdx) {
+        j = nullptr;
+        break;
+      }
+      auto idx = optIdx.value();
+
+      auto &thelist = j->asList();
+      if (idx >= thelist.size()) {
+        j = nullptr;
+        break;
+      }
+      j = &(thelist[idx]);
     } else {
       j = nullptr;
+      break;
     }
   }
   return j;
 }
 
 template <class _Var>
-static _Var *find(_Var *j, const Var::Path &path) {
-  return jas::find(j, std::begin(path), std::end(path));
-}
-
-inline void __arthThrowIf(bool cond, const String &msg, const Var &first,
-                          const Var &second) {
-  throwIf<EvaluationError>(cond, msg, ": (", first.dump(), ", ", second.dump(),
-                           ")");
-}
-
-inline void __throwIfNotAllNumbers(const Var &first, const Var &second) {
-  __arthThrowIf(!(first.isNumber() && second.isNumber()),
-                JASSTR("Expect 2 numbers"), first, second);
-}
-
-template <class _StdOp>
-struct __Applier {
-  __Applier(const char *name, const Var &first, const Var &second)
-      : first_(first), second_(second), name_(name) {}
-
-  template <class _Type>
-  __Applier &applyAs() {
-    if (first_.isType<_Type>()) {
-      applied_ = true;
-      __arthThrowIf(
-          !second_.isType<_Type>(),
-          strJoin("operator `", name_, "` Expected 2 values of same type"),
-          first_, second_);
-      result_ = (_StdOp{}(first_.getValue<_Type>(), second_.getValue<_Type>()));
-    }
-    return *this;
-  }
-
-  __Applier &applyAsNumber() {
-    if (first_.isNumber()) {
-      applied_ = true;
-      __arthThrowIf(!second_.isNumber(),
-                    strJoin("operator `", name_, "` Expected 2 numbers"),
-                    first_, second_);
-      result_ = _StdOp{}(first_.getDouble(), second_.getDouble());
-    }
-    return *this;
-  }
-
-  Var takeResult() {
-    __arthThrowIf(!applied_, strJoin("operator`", name_, "` Not applicable on"),
-                  first_, second_);
-    return move(result_);
-  }
-
-  operator bool() const { return applied_; }
-
-  const Var &first_;
-  const Var &second_;
-  Var result_;
-  const char *name_;
-  bool applied_ = false;
-};
-
-template <class _StdOp>
-auto __applier(const char *name, const Var &first, const Var &second) {
-  return __Applier<_StdOp>(name, first, second);
+static _Var *_find(_Var *j, const Var::Path &path) {
+  return jas::_find(j, std::begin(path), std::end(path));
 }
 
 #define __Var_type_check(Type)                                              \
-  throwIf<TypeError>(!is##Type(), "Trying get ", #Type, "from non ", #Type, \
-                     " type")
+  __jas_throw_if(TypeError, !is##Type(), "Trying get ", #Type, "from non ", \
+                 #Type, " type")
 
 #define __Var_type_check_after_try_become(Type) \
   if (isNull()) {                               \
@@ -131,25 +105,26 @@ auto __applier(const char *name, const Var &first, const Var &second) {
   }
 
 template <class T = Null>
-auto makeValue(T &&v = {}) {
-  return make_shared<Var::ValueType>(std::forward<T>(v));
+auto makeValue(T v = {}) {
+  return make_shared<Var::ValueType>(move(v));
 }
 
 void throwOutOfRange(bool cond, size_t i) {
-  throwIf<OutOfRange>(cond, "Out of bound access: ", i);
+  __jas_throw_if(OutOfRange, cond, "Out of bound access: ", i);
 }
 
 void throwOutOfRange(bool cond, const StringView &path) {
-  throwIf<OutOfRange>(cond, "Path does not exist: ", path);
+  __jas_throw_if(OutOfRange, cond, "Path does not exist: ", path);
 }
 
 Var::Var() : value(makeValue()) {}
 Var::Var(List list) : value(makeValue(move(list))) {}
 Var::Var(Dict dict) : value(makeValue(move(dict))) {}
 Var::Var(Bool b) : value(makeValue(b)) {}
-Var::Var(Int i) : value(makeValue(i)) {}
-Var::Var(Double d) : value(makeValue(d)) {}
-Var::Var(float d) : value(makeValue(static_cast<Double>(d))) {}
+Var::Var(Int i) : value(makeValue<Number>(i)) {}
+Var::Var(Double d) : value(makeValue<Number>(d)) {}
+Var::Var(float d) : value(makeValue<Number>(d)) {}
+Var::Var(Number d) : value(makeValue<Number>(d)) {}
 Var::Var(String in) : value(makeValue(move(in))) {}
 Var::Var(Ref in) : value(makeValue(in)) {}
 Var::Var(const CharType *in) : value(makeValue<String>(in)) {}
@@ -205,7 +180,7 @@ size_t Var::size() const {
   } else if (isDict()) {
     return asDict().size();
   } else {
-    throw_<TypeError>("Trying get size of non supported type");
+    __jas_throw(TypeError, "Trying get size of non supported type");
     return 0;
   }
 }
@@ -223,7 +198,15 @@ bool Var::empty() const {
 }
 
 void Var::clear() {
-  std::visit([](auto &v) { v = std::decay_t<decltype(v)>{}; }, value->asBase());
+  std::visit(
+      [](auto &v) {
+        if constexpr (std::is_same_v<std::decay_t<decltype(v)>, Ref>) {
+          v->clear();
+        } else {
+          v = std::decay_t<decltype(v)>{};
+        }
+      },
+      value->asBase());
 }
 
 bool Var::contains(const StringView &key) const {
@@ -233,7 +216,7 @@ bool Var::contains(const StringView &key) const {
 }
 
 bool Var::exists(const PathView &path) const {
-  return jas::find(this, path) != nullptr;
+  return jas::_find(this, path) != nullptr;
 }
 
 void Var::add(Var val) {
@@ -281,7 +264,7 @@ const Var &Var::at(const String &key) const {
 }
 
 const Var &Var::atPath(const PathView &path) const {
-  auto p = jas::find(this, path);
+  auto p = jas::_find(this, path);
   throwOutOfRange(!p, path);
   return *p;
 }
@@ -296,7 +279,7 @@ Var Var::getAt(const StringView &key) const {
 }
 
 Var Var::getPath(const PathView &path) const {
-  auto pv = jas::find(this, std::begin(path), std::end(path));
+  auto pv = jas::_find(this, std::begin(path), std::end(path));
   return pv ? *pv : Var{};
 }
 
@@ -315,11 +298,11 @@ size_t Var::erase(const String &key) {
   return asDict().erase(key);
 }
 
-Var Var::ref(const Var &other) {
+Var Var::ref(Var other) {
   if (other.isRef()) {
     return make_shared<Var>(*(other.asRef()));
   } else {
-    return make_shared<Var>(other);
+    return make_shared<Var>(move(other));
   }
 }
 
@@ -332,13 +315,13 @@ size_t Var::typeID() const { return value->index(); }
 #define __Var_is_type_impl(Type) \
   std::holds_alternative<Type>(*value) || (isRef() && asRef()->is##Type())
 
-bool Var::isNumber() const { return isInt() || isDouble(); }
+bool Var::isNumber() const { return __Var_is_type_impl(Number); }
 
 bool Var::isString() const { return __Var_is_type_impl(String); }
 
-bool Var::isInt() const { return __Var_is_type_impl(Int); }
+bool Var::isInt() const { return isNumber() && asNumber().isInt(); }
 
-bool Var::isDouble() const { return __Var_is_type_impl(Double); }
+bool Var::isDouble() const { return isNumber() && asNumber().isDouble(); }
 
 bool Var::isBool() const { return __Var_is_type_impl(Bool); }
 
@@ -352,9 +335,7 @@ bool Var::isRef() const { return std::holds_alternative<Ref>(*value); }
 
 #define __Var_as_impl(Type) isRef() ? asRef()->as##Type() : value->get<Type>()
 
-Int &Var::asInt() { return __Var_as_impl(Int); }
-
-Double &Var::asDouble() { return __Var_as_impl(Double); }
+Number &Var::asNumber() { return __Var_as_impl(Number); }
 
 String &Var::asString() { return __Var_as_impl(String); }
 
@@ -364,9 +345,9 @@ List &Var::asList() { return __Var_as_impl(List); }
 
 Dict &Var::asDict() { return __Var_as_impl(Dict); }
 
-const Int &Var::asInt() const { return __Var_as_impl(Int); }
+Ref &Var::asRef() { return std::get<Ref>(value->asBase()); }
 
-const Double &Var::asDouble() const { return __Var_as_impl(Double); }
+const Number &Var::asNumber() const { return __Var_as_impl(Number); }
 
 const String &Var::asString() const { return __Var_as_impl(String); }
 
@@ -376,24 +357,20 @@ const List &Var::asList() const { return __Var_as_impl(List); }
 
 const Dict &Var::asDict() const { return __Var_as_impl(Dict); }
 
-Double Var::getNumber(Double onFailure) const { return getDouble(onFailure); }
+const Ref &Var::asRef() const { return std::get<Ref>(value->asBase()); }
 
-Int Var::getInt(Int onFailure) const {
-  if (isInt()) {
-    return asInt();
-  } else if (isDouble()) {
-    return static_cast<Int>(asDouble());
+Number Var::getNumber(Number onFailure) const {
+  if (isNumber()) {
+    return asNumber();
+  } else {
+    return onFailure;
   }
-  return onFailure;
 }
 
+Int Var::getInt(Int onFailure) const { return getNumber(onFailure); }
+
 Double Var::getDouble(Double onFailure) const {
-  if (isDouble()) {
-    return asDouble();
-  } else if (isInt()) {
-    return static_cast<Double>(asInt());
-  }
-  return onFailure;
+  return static_cast<Double>(getNumber(onFailure));
 }
 
 String Var::getString(String onFailure) const {
@@ -429,9 +406,14 @@ Var &Var::assign(Var e) {
   return *this;
 }
 
-bool Var::detachIfUseCountGreaterThan(long shouldDetachCount) {
-  if (isRef() && asRef()->useCount() > shouldDetachCount) {
-    asRef() = make_shared<Var>(asRef()->clone());
+bool Var::detach(long shouldDetachCount) {
+  if (isRef()) {
+    if (asRef()->useCount() > shouldDetachCount) {
+      asRef() = make_shared<Var>(asRef()->clone());
+      return true;
+    }
+  } else if (useCount() > shouldDetachCount) {
+    value = make_shared<ValueType>(*value);
     return true;
   }
   return false;
@@ -471,50 +453,14 @@ Var::ValuePtr Var::fromJson(const Json &json) {
   } else if (JsonTrait::isString(json)) {
     return makeValue(JsonTrait::get<String>(json));
   } else if (JsonTrait::isDouble(json)) {
-    return makeValue(JsonTrait::get<Double>(json));
+    return makeValue<Number>(JsonTrait::get<Double>(json));
   } else if (JsonTrait::isInt(json)) {
-    return makeValue(JsonTrait::get<Int>(json));
+    return makeValue<Number>(JsonTrait::get<Int>(json));
   } else if (JsonTrait::isBool(json)) {
     return makeValue(JsonTrait::get<Bool>(json));
   } else {
     return makeValue<Null>();
   }
-}
-
-Ref &Var::asRef() { return std::get<Ref>(value->asBase()); }
-const Ref &Var::asRef() const { return std::get<Ref>(value->asBase()); }
-
-Var operator+(const Var &first, const Var &second) {
-  auto applier = __applier<std::plus<>>("+", first, second);
-  applier.applyAsNumber() || applier.applyAs<String>() ||
-      applier.applyAs<List>();
-  return applier.takeResult();
-}
-
-Var operator+(const List &first, const List &second) {
-  auto newList = first;
-  newList.insert(std::end(newList), std::begin(second), std::end(second));
-  return newList;
-}
-
-Var operator-(const Var &first, const Var &second) {
-  return __applier<std::minus<>>("-", first, second)
-      .applyAsNumber()
-      .takeResult();
-}
-
-Var operator*(const Var &first, const Var &second) {
-  return __applier<std::multiplies<>>("*", first, second)
-      .applyAsNumber()
-      .takeResult();
-}
-
-Var operator/(const Var &first, const Var &second) {
-  __throwIfNotAllNumbers(first, second);
-  __arthThrowIf(std::numeric_limits<double>::epsilon() >
-                    std::abs(second.getDouble() - 0.0),
-                JASSTR("Devide by zero"), first, second);
-  return (first.getDouble() / second.getDouble());
 }
 
 bool operator==(const Var &first, const Var &second) {
@@ -528,14 +474,10 @@ bool operator==(const Var &first, const Var &second) {
     return std::visit(
         [&second](auto &&v) {
           using PT = std::decay_t<decltype(v)>;
-          if constexpr (std::is_same_v<PT, Int>) {
-            return v == second.asInt();
-          } else if constexpr (std::is_same_v<PT, Double>) {
-            return v == second.asDouble();
+          if constexpr (std::is_same_v<PT, Number>) {
+            return v == second.asNumber();
           } else if constexpr (std::is_same_v<PT, String>) {
             return v == second.asString();
-          } else if constexpr (std::is_same_v<PT, Int>) {
-            return v == second.asInt();
           } else if constexpr (std::is_same_v<PT, List>) {
             return v == second.asList();
           } else if constexpr (std::is_same_v<PT, Dict>) {
@@ -549,8 +491,6 @@ bool operator==(const Var &first, const Var &second) {
           }
         },
         first.value->asBase());
-  } else if (first.isNumber() && second.isNumber()) {
-    return first.getNumber() == second.getNumber();
   } else {
     return false;
   }
@@ -568,7 +508,7 @@ bool operator<(const Var &first, const Var &second) {
           using PT = decay_t<decltype(val)>;
           if constexpr (is_same_v<bool, PT>) {
             return val < second.asBool();
-          } else if constexpr (is_integral_v<PT> || is_floating_point_v<PT>) {
+          } else if constexpr (is_same_v<Number, PT>) {
             return val < second.getNumber();
           } else if constexpr (is_same_v<String, PT>) {
             return val < second.getString();
@@ -587,8 +527,6 @@ bool operator<(const Var &first, const Var &second) {
           }
         },
         first.value->asBase());
-  } else if (first.isNumber() && second.isNumber()) {
-    return first.getNumber() < second.getNumber();
   } else if (first.isRef()) {
     return first.asRef() ? *first.asRef() < second : true;
   } else if (second.isRef()) {

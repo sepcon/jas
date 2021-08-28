@@ -3,8 +3,8 @@
 #include <memory>
 #include <vector>
 
-#include "Var.h"
 #include "Json.h"
+#include "Var.h"
 
 namespace jas {
 class EvalContextIF;
@@ -17,10 +17,9 @@ class EvalContextIF {
   virtual std::vector<String> supportedFunctions() const = 0;
   virtual bool functionSupported(const StringView& functionName) const = 0;
   virtual Var invoke(const String& name, const Var& param) = 0;
-  virtual Var variable(const String& name) = 0;
-  virtual Var setVariable(const String& name, Var val) = 0;
-  virtual EvalContextPtr subContext(const String& ctxtID,
-                                    const Var& input) = 0;
+  virtual Var* variable(const String& name) = 0;
+  virtual Var* setVariable(const String& name, Var val) = 0;
+  virtual EvalContextPtr subContext(const String& ctxtID, const Var& input) = 0;
   virtual String debugInfo() const = 0;
 };
 

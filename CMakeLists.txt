@@ -42,7 +42,8 @@ add_library(jas
     include/jas/EvaluableClasses.h
     include/jas/Evaluable.h
     include/jas/Var.h
-    include/jas/ObjectPath.h
+    include/jas/Number.h
+    include/jas/Path.h
     include/jas/Translator.h
     include/jas/SyntaxValidator.h
     include/jas/SyntaxEvaluator.h
@@ -58,8 +59,10 @@ add_library(jas
     include/jas/FunctionModule.h
     include/jas/FunctionModuleBaseT.h
     include/jas/ModuleManager.h
+    include/jas/TypesName.h
 
     src/VarManipModuleShared.h
+    src/Number.cpp
     src/SyntaxEvaluatorImpl.cpp
 
     src/JASFacade.cpp

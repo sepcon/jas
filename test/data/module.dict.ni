@@ -40,3 +40,13 @@ false
 true
 {"@dict.exists":[{"key1":{"key2":{"key3":"value"}}},"key1/key2/key3"]}
 true
+{"@plus": [{}, {}]}
+{}
+{"@plus": [{"key": "value"}, {"key1": "value1"}]}
+{"key":"value","key1":"value1"}
+{"@minus": [{"key": "value"}, {"key1": "value1"}]}
+{"@exception":"TypeError"}
+{"$dict":{"object0":{"arr0":[{"key":10}]}},"@dict.get_path":["$dict", "object0/arr0/0/key"]}
+10
+{"$dict":{"object0":{"arr0":[{"key":10}]}},"@dict.get_path":["$dict", "object0/arr0/1/key"]}
+null

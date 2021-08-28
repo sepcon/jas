@@ -1,18 +1,31 @@
 #pragma once
 
+#include "Exception.h"
 #include "String.h"
 
 namespace jas {
 namespace __details {
 
-template <class _StringType, CharType _Sep = JASSTR('/')>
-class ObjectPathBase {
+template <class _String>
+struct DefaultPathValidator {
+  bool operator()(const _String& /*str*/, size_t /*currentPos*/,
+                  size_t /*startPos*/) const {
+    return true;
+  }
+};
+
+__mc_jas_exception(InvalidPathException);
+template <class _StringType, CharType _Sep = JASSTR('/'),
+          class _Validator = DefaultPathValidator<_StringType>>
+class PathBase {
  public:
   using StringType = _StringType;
+  using Validator = _Validator;
+
   static const CharType seperator = _Sep;
 
   struct Iterator : public std::forward_iterator_tag {
-    Iterator(const ObjectPathBase* owner = nullptr) : owner_(owner) {
+    Iterator(const PathBase* owner = nullptr) : owner_(owner) {
       if (owner) {
         view_ = nextView(owner->str_, 0);
       }
@@ -41,12 +54,16 @@ class ObjectPathBase {
 
     const StringView& operator*() const { return view_; }
 
-    static StringView nextView(const ObjectPathBase::StringType& str,
-                               size_t start) {
+    static StringView nextView(const PathBase::StringType& str, size_t start) {
+      Validator isCharValid;
       auto i = start;
       auto size = str.size();
       while (i < size) {
         if (str[i] != _Sep) {
+          if (!isCharValid(str, i, start)) {
+            __jas_throw(InvalidPathException, "Invalid character '", str[i],
+                        "'");
+          }
           ++i;
         } else if (i < start + 1) {
           start = ++i;
@@ -59,18 +76,18 @@ class ObjectPathBase {
       }
       return {};
     }
-    const ObjectPathBase* owner_ = nullptr;
+    const PathBase* owner_ = nullptr;
     StringView view_;
   };
 
-  ObjectPathBase() = default;
-  ObjectPathBase(const StringType& str) : str_(str) {}
-  ObjectPathBase(StringType&& str) : str_(std::move(str)) {}
+  PathBase() = default;
+  PathBase(const StringType& str) : str_(str) {}
+  PathBase(StringType&& str) : str_(std::move(str)) {}
 
   template <typename _String,
             std::enable_if_t<std::is_constructible_v<StringType, _String>,
                              bool> = true>
-  ObjectPathBase(_String&& str) : str_(std::forward<_String>(str)) {}
+  PathBase(_String&& str) : str_(std::forward<_String>(str)) {}
 
   const StringType& underType() const { return this->str_; }
   operator const StringType&() const { return this->str_; }
@@ -88,9 +105,10 @@ class ObjectPathBase {
   StringType str_;
 };
 
-template <CharType _Sep = JASSTR('/')>
-class BasicObjectPath : public ObjectPathBase<String, _Sep> {
-  using _Base = ObjectPathBase<String, _Sep>;
+template <CharType _Sep = JASSTR('/'),
+          class _Validator = DefaultPathValidator<String>>
+class BasicPath : public PathBase<String, _Sep, _Validator> {
+  using _Base = PathBase<String, _Sep, _Validator>;
 
  public:
   using _Base::_Base;
@@ -102,8 +120,8 @@ class BasicObjectPath : public ObjectPathBase<String, _Sep> {
   }
 
   template <class _String>
-  BasicObjectPath operator/(_String&& str) const {
-    BasicObjectPath path = *this;
+  BasicPath operator/(_String&& str) const {
+    BasicPath path = *this;
     join(path, std::forward<_String>(str));
     return path;
   }
@@ -118,7 +136,7 @@ class BasicObjectPath : public ObjectPathBase<String, _Sep> {
   }
 
   template <class _String>
-  void join(BasicObjectPath& path, _String&& str) {
+  void join(BasicPath& path, _String&& str) {
     if (path.str_.empty()) {
       path.str_ = std::forward<_String>(str);
     } else if (path.str_.back() == _Sep) {
@@ -130,21 +148,22 @@ class BasicObjectPath : public ObjectPathBase<String, _Sep> {
   }
 };
 
-template <CharType _Sep = JASSTR('/')>
-class BasicObjectPathView : public ObjectPathBase<StringView, _Sep> {
-  using _Base = ObjectPathBase<StringView, _Sep>;
+template <CharType _Sep = JASSTR('/'),
+          class _Validator = DefaultPathValidator<StringView>>
+class BasicPathView : public PathBase<StringView, _Sep, _Validator> {
+  using _Base = PathBase<StringView, _Sep, _Validator>;
 
  public:
   using _Base::_Base;
-  BasicObjectPathView(const BasicObjectPath<_Sep>& path)
-      : _Base(path.underType()) {}
+  BasicPathView(const BasicPath<_Sep>& path) : _Base(path.underType()) {}
 };
 
 }  // namespace __details
 
-using __details::BasicObjectPath;
-using __details::BasicObjectPathView;
-using ObjectPath = BasicObjectPath<>;
-using ObjectPathView = BasicObjectPathView<>;
+using __details::BasicPath;
+using __details::BasicPathView;
+using __details::DefaultPathValidator;
+using Path = BasicPath<>;
+using PathView = BasicPathView<>;
 
 }  // namespace jas

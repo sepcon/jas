@@ -33,6 +33,22 @@ FunctionModulePtr ModuleManager::getModule(const StringView &moduleName) {
   return it != std::end(modules_) ? it->second : FunctionModulePtr{};
 }
 
+FunctionModulePtr ModuleManager::findModuleByFuncName(
+    const StringView &funcName) {
+  FunctionModulePtr ret;
+  for (auto &[mname, module] : modules_) {
+    if (module->has(funcName)) {
+      if (ret) {
+        throw_<Exception>("Ambiguous call to function `", funcName,
+                          "` that can be found in module `", ret->moduleName(),
+                          "` and `", module->moduleName(), "`");
+      }
+      ret = module;
+    }
+  }
+  return ret;
+}
+
 FunctionNameList ModuleManager::enumerateFuncions() {
   FunctionNameList list;
   for (auto &[moduleName, module] : modules_) {
@@ -42,11 +58,10 @@ FunctionNameList ModuleManager::enumerateFuncions() {
 }
 
 Var ModuleManager::invoke(const String &module, const String &funcName,
-                             Var &evaluatedParam,
-                             SyntaxEvaluatorImpl *evaluator) {
+                          Var &evaluatedParam, SyntaxEvaluatorImpl *evaluator) {
   auto itMdl = modules_.find(module);
-  throwIf<FunctionNotFoundError>(itMdl == std::end(modules_),
-                                 "Not found module ", module);
+  __jas_throw_if(FunctionNotFoundError, itMdl == std::end(modules_),
+                 "Not found module ", module);
   assert(itMdl->second);
   return itMdl->second->eval(funcName, evaluatedParam, evaluator);
 }

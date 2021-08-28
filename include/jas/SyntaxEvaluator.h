@@ -11,7 +11,6 @@ namespace jas {
 using DebugOutputCallback = std::function<void(const String&)>;
 class ModuleManager;
 class Evaluable;
-
 class SyntaxEvaluator {
  public:
   SyntaxEvaluator(ModuleManager* moduleMgr);

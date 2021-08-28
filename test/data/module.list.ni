@@ -56,4 +56,15 @@ false
 3
 {"@list.pop":[[1,2,3], 5]}
 {"@exception":"InvalidArgument"}
-
+{"@list.clear": [1,2,3]}
+[]
+{"@list.is_empty": [1,2,3]}
+false
+{"@list.is_empty": []}
+true
+{"@list.contains": [[1,2,3], 4]}
+false
+{"@list.contains": [[1,2,3], 3]}
+true
+{"@list.contains": [[1,2,3], "3"]}
+false

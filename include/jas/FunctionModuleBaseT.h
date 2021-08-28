@@ -9,14 +9,14 @@ class FunctionModuleBaseT : public FunctionModuleIF {
  public:
   using FunctionsMap = std::map<String, FunctionInvocationType, std::less<>>;
 
-  Var eval(const String& funcName, Var& evaluatedParam,
-              SyntaxEvaluatorImpl*) override {
+  Var eval(const String& funcName, Var evaluatedParam,
+           SyntaxEvaluatorImpl*) override {
     auto it = _funcMap().find(funcName);
 
-    throwIf<FunctionNotFoundError>(it == std::end(_funcMap()),
-                                   "Unknown reference to function `",
-                                   moduleName(), ".", funcName, "`");
-    return it->second(evaluatedParam);
+    __jas_throw_if(FunctionNotFoundError, it == std::end(_funcMap()),
+                   "Unknown reference to function `", moduleName(), ".",
+                   funcName, "`");
+    return it->second(std::move(evaluatedParam));
   }
 
   bool has(const StringView& funcName) const override {

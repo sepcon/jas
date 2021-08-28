@@ -7,7 +7,8 @@
 #include <vector>
 
 #include "Json.h"
-#include "ObjectPath.h"
+#include "Number.h"
+#include "Path.h"
 
 namespace jas {
 
@@ -22,8 +23,8 @@ class Var {
   using String = jas::String;
   using List = std::vector<Var>;
   using Dict = std::map<String, Var, std::less<>>;
-  using Path = ObjectPath;
-  using PathView = ObjectPathView;
+  using Path = Path;
+  using PathView = PathView;
   using ValuePtr = std::shared_ptr<ValueType>;
   struct Null {};
 
@@ -34,6 +35,7 @@ class Var {
   Var(Int i);
   Var(Double d);
   Var(float d);
+  Var(Number in);
   Var(String in);
   Var(Ref in);
   Var(const CharType* in);
@@ -48,7 +50,7 @@ class Var {
   Var(_Integer&& i) : Var(static_cast<Int>(i)) {}
 
   template <typename T, std::enable_if_t<std::is_pointer_v<T>, bool> = true>
-  Var(T&& t) = delete;
+  Var(T t) = delete;
   Var(std::nullptr_t) = delete;
 
   uint64_t address() const;
@@ -77,7 +79,7 @@ class Var {
   Var getPath(const PathView& path) const;
   void add(String key, Var val);
 
-  static Var ref(const Var& rf = {});
+  static Var ref(Var rf = {});
   static Var list(List list = {});
   static Var dict(Dict dict = {});
 
@@ -92,21 +94,21 @@ class Var {
   bool isNull() const;
   bool isRef() const;
 
-  Int& asInt();
-  Double& asDouble();
+  Number& asNumber();
   String& asString();
   bool& asBool();
   List& asList();
   Dict& asDict();
+  Ref& asRef();
 
-  const Int& asInt() const;
-  const Double& asDouble() const;
+  const Number& asNumber() const;
   const String& asString() const;
   const Bool& asBool() const;
   const List& asList() const;
   const Dict& asDict() const;
+  const Ref& asRef() const;
 
-  Double getNumber(Double onFailure = 0.0) const;
+  Number getNumber(Number onFailure = 0.0) const;
   Int getInt(Int onFailure = 0) const;
   Double getDouble(Double onFailure = 0) const;
   String getString(String onFailure = {}) const;
@@ -116,24 +118,19 @@ class Var {
   template <class T>
   bool isType() const;
   template <class T>
-  decltype(auto) getValue(T&& onFailure = {}) const;
+  decltype(auto) getValue(T onFailure = {}) const;
   template <typename _callable>
   auto visitValue(_callable&& apply, bool throwWhenNull = false) const;
 
   Var clone() const;
   Var& assign(Var e);
-  bool detachIfUseCountGreaterThan(long shouldDetachCount = 1);
+  bool detach(long shouldDetachCount = 1);
   void becomeNull();
   Json toJson() const;
   String dump() const;
 
  private:
   static ValuePtr fromJson(const Json& json);
-  friend Var operator+(const Var& first, const Var& second);
-  friend Var operator+(const Var::List& first, const Var::List& second);
-  friend Var operator-(const Var& first, const Var& second);
-  friend Var operator*(const Var& first, const Var& second);
-  friend Var operator/(const Var& first, const Var& second);
   friend bool operator==(const Var& first, const Var& second);
   friend bool operator!=(const Var& first, const Var& secondr);
   friend bool operator<(const Var& first, const Var& second);
@@ -141,8 +138,6 @@ class Var {
   friend bool operator>=(const Var& first, const Var& second);
   friend bool operator<=(const Var& first, const Var& second);
 
-  Ref& asRef();
-  const Ref& asRef() const;
   ValuePtr value;
 };
 
@@ -166,10 +161,12 @@ bool Var::isType() const {
   }
 }
 template <class T>
-decltype(auto) Var::getValue(T&& onFailure) const {
+decltype(auto) Var::getValue(T onFailure) const {
   using PT = std::decay_t<T>;
   if constexpr (std::is_same_v<PT, Bool>) {
     return getBool(onFailure);
+  } else if constexpr (std::is_same_v<PT, Number>) {
+    return getNumber();
   } else if constexpr (std::is_floating_point_v<PT>) {
     return static_cast<T>(getDouble(onFailure));
   } else if constexpr (std::is_same_v<PT, String>) {
@@ -188,10 +185,8 @@ template <typename _callable>
 auto Var::visitValue(_callable&& apply, bool throwWhenNull) const {
   if (isBool()) {
     return apply(getBool());
-  } else if (isInt()) {
-    return apply(getInt());
-  } else if (isDouble()) {
-    return apply(getDouble());
+  } else if (isNumber()) {
+    return apply(getNumber());
   } else if (isString()) {
     return apply(getString());
   } else if (isList()) {
@@ -199,7 +194,7 @@ auto Var::visitValue(_callable&& apply, bool throwWhenNull) const {
   } else if (isDict()) {
     return apply(getDict());
   } else {
-    throwIf<TypeError>(throwWhenNull, "vitsit null");
+    __jas_throw_if(TypeError, throwWhenNull, "vitsit null");
     return apply(Null{});
   }
 }

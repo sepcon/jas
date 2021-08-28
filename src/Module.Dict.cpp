@@ -30,7 +30,7 @@ __dict_func(update, params) {
     __jas_func_throw_invalidargs_if(
         !params[1].isDict() || params[1].size() == 0,
         "Expect an object of {key:value, ...}", params[1]);
-    auto& dict = detach_ref(params[0]);
+    auto& dict = variable_detach(params[0]);
     auto& additionalDict = params[1].asDict();
     for (auto& [key, val] : additionalDict) {
       dict.add(key, val);
@@ -39,7 +39,7 @@ __dict_func(update, params) {
   } else if (params.size() == 3) {
     __jas_func_throw_invalidargs_if(!params[1].isString(),
                                     "Expect a string of key", params[1]);
-    auto& dict = detach_ref(params[0]);
+    auto& dict = variable_detach(params[0]);
     auto& key = params[1].asString();
     dict.add(key, params[2]);
     return dict;
@@ -54,26 +54,29 @@ __dict_func(erase, params) {
   __dict_verify_args_fit_count(params, 2);
   __jas_func_throw_invalidargs_if(!params[1].isString(),
                                   "expect a string of key", params[1]);
-  auto& dict = detach_ref(params[0]);
+  auto& dict = variable_detach(params[0]);
   dict.erase(params[1].asString());
   return dict;
 }
 
 __dict_func(get, params) {
+  // get:["$dict", "key"]
   __dict_verify_args_fit_count(params, 2);
   __jas_func_throw_invalidargs_if(!params[1].isString(),
                                   "expect a string of key", params[1]);
-  return params[0].at(params[1].asString());
+  return params[0].getAt(params[1].asString());
 }
 
 __dict_func(get_path, params) {
+  // get_path:["$dict", "path/to/value"]
   __dict_verify_args_fit_count(params, 2);
   __jas_func_throw_invalidargs_if(!params[1].isString(),
                                   "expect a string of key", params[1]);
-  return params[0].atPath(params[1].asString());
+  return params[0].getPath(params[1].asString());
 }
 
 __dict_func(contains, params) {
+  // contains:["$dict", "key"]
   __dict_verify_args_fit_count(params, 2);
   __jas_func_throw_invalidargs_if(!params[1].isString(),
                                   "expect a string of key", params[1]);
@@ -81,6 +84,7 @@ __dict_func(contains, params) {
 }
 
 __dict_func(exists, params) {
+  // exists:["$dict", "path/to/value"]
   __dict_verify_args_fit_count(params, 2);
   __jas_func_throw_invalidargs_if(!params[1].isString(),
                                   "expect a string of key", params[1]);
@@ -88,12 +92,14 @@ __dict_func(exists, params) {
 }
 
 __dict_func(clear, thedict) {
+  // contains:"$dict"
   __dict_verify_no_args(thedict);
-  detach_ref(thedict).asDict().clear();
+  variable_detach(thedict).asDict().clear();
   return thedict;
 }
 
 __dict_func(keys, thedict) {
+  // keys:"$dict"
   __dict_verify_no_args(thedict);
   auto keys = Var::list();
   for (auto& [key, val] : thedict.asDict()) {
@@ -103,6 +109,7 @@ __dict_func(keys, thedict) {
 }
 
 __dict_func(values, thedict) {
+  // values:"$dict"
   __dict_verify_no_args(thedict);
   auto values = Var::list();
   for (auto& [key, val] : thedict.asDict()) {
@@ -112,11 +119,13 @@ __dict_func(values, thedict) {
 }
 
 __dict_func(is_empty, thedict) {
+  // is_empty:"$dict"
   __dict_verify_no_args(thedict);
   return thedict.empty();
 }
 
 __dict_func(size, thedict) {
+  // size:"$dict"
   __dict_verify_no_args(thedict);
   return thedict.size();
 }

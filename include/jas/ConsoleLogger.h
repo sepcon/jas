@@ -9,36 +9,45 @@
 namespace jas {
 
 #ifdef JAS_USE_WSTR
-#define __clogger std::wcout
+#define __jascout std::wcout
+#define __jascerr std::wcerr
 #else
-#define __clogger std::cout
+#define __jascout std::cout
+#define __jascerr std::cerr
 #endif
 
-struct __Clogger {
-  template <typename T>
-  const __Clogger& operator<<(const T& v) const {
-    __clogger << v;
-    return *this;
-  }
+#define __jas_clogger_class(name, impl)               \
+  struct __##name {                                   \
+    template <typename T>                             \
+    const __##name& operator<<(const T& v) const {    \
+      impl << v;                                      \
+      return *this;                                   \
+    }                                                 \
+                                                      \
+    const __##name& operator<<(const Json& e) const { \
+      impl << JsonTrait::dump(e);                     \
+      return *this;                                   \
+    }                                                 \
+                                                      \
+    ~__##name() { impl << std::endl; /*"\n";*/ }      \
+  };                                                  \
+                                                      \
+  inline auto name() { return __##name{}; }
 
-  const __Clogger& operator<<(const Json& e) const {
-    __clogger << JsonTrait::dump(e);
-    return *this;
-  }
+__jas_clogger_class(cloginfo, __jascout);
+__jas_clogger_class(clogerr, __jascerr);
 
-  ~__Clogger() { __clogger << std::endl; /*"\n";*/ }
-};
-
-inline auto clogger() { return __Clogger{}; }
+#undef __jas_clogger_class
 
 struct CloggerSection {
+  size_t titleLen = 0;
   CloggerSection(const String& sectionName) {
-    __clogger << "==> " << sectionName << ":\n"
-              << std::setfill(JASSTR('-')) << std::setw(sectionName.size() + 6)
-              << "\n";
+    titleLen = sectionName.size() + 8;
+    __jascout << "==> [" << sectionName << "]:\n"
+              << std::setfill(JASSTR('-')) << std::setw(titleLen) << "\n";
   }
   ~CloggerSection() {
-    __clogger << std::setfill(JASSTR('-')) << std::setw(30) << '\n';
+    __jascout << std::setfill(JASSTR('-')) << std::setw(titleLen) << "\n";
   }
 };
 
@@ -49,7 +58,7 @@ struct CLoggerTimerSection : public CloggerSection {
 
   ~CLoggerTimerSection() {
     using namespace std::chrono;
-    __clogger
+    __jascout
         << "Elapse time = "
         << duration_cast<microseconds>(ClockType::now() - startTime).count()
         << "us\n";

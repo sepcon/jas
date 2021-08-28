@@ -6,16 +6,16 @@ namespace jas {
 namespace mdl {
 
 using std::make_shared;
-using ModuleFunction = Var (*)(Var &params);
+using ModuleFunction = Var (*)(Var params);
 
-inline Var &detach_ref(Var &var) {
-  var.detachIfUseCountGreaterThan(2);
+inline Var &variable_detach(Var &var) {
+  var.detach();
   return var;
 }
 
 #define __module_func(module, func_name, params)                    \
   static const auto module##_func_##func_name = JASSTR(#func_name); \
-  Var module##_##func_name(Var &params)
+  Var module##_##func_name(Var params)
 
 #define __module_class_begin(module)                               \
   struct __FunctionModule##module                                  \

@@ -58,7 +58,7 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
   ModuleManager* moduleMgr_ = nullptr;
   int evalCount_ = 0;
   //-----------------------------------------------
-  void eval(const DirectVal& v) override;
+  void eval(const Constant& v) override;
   void eval(const EvaluableDict& v) override;
   void eval(const EvaluableList& v) override;
   void eval(const ArithmaticalOperator& op) override;
@@ -71,14 +71,11 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
   void eval(const ModuleFI& func) override;
   void eval(const VariableFieldQuery& query) override;
   void eval(const Variable& rv) override;
-  Var _queryOrEvalVariable(const String& variableName);
+  Var* _queryOrEvalVariable(const String& variableName);
   void _evalOnStack(const Evaluable* e, String ctxtID = {}, Var ctxtData = {});
   Var _evalRet(const Evaluable* e, String ctxtID = {}, Var ctxtData = {});
-  /// Exceptions
   template <class _Exception, typename... _Msg>
-  void evalThrowIf(bool cond, _Msg&&... msg);
-  template <class _Exception, typename... _Msg>
-  void evalThrow(_Msg&&...);
+  void stackUnwindThrow(_Msg&&...);
 
   /// Stack functions
   String stackDump() const;
@@ -92,8 +89,8 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
   EvaluationFrame& stackTopFrame();
   const EvalContextPtr& stackTopContext();
   const EvalContextPtr& stackRootContext();
-  Var evaluateSingleVar(const EvalContextPtr& ctxt, const String& varname,
-                        const VariableInfo& vi);
+  Var* evaluateSingleVar(const EvalContextPtr& ctxt, const String& varname,
+                         const VariableInfo& vi);
   void evaluateVariables(const StackVariablesPtr& params);
   String generateBackTrace(const String& msg) const;
 
@@ -132,7 +129,7 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
   struct ApplyUnaryOpImpl {
     static Var apply(const _Params& evals) {
       auto evaled = Var{evals.back()};
-      throwIf<EvaluationError>(evaled.isNull(), "Evaluated to null");
+      __jas_throw_if(EvaluationError, evaled.isNull(), "Evaluated to null");
       return (_std_op{}(Var{evals.back()}.getValue<T>()));
     }
   };
@@ -145,7 +142,7 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
       try {
         return (_std_op{}(lhsEv.getValue<T>(), rhsEv.getValue<T>()));
       } catch (const TypeError&) {
-        throw_<TypeError>("(", lhsEv.dump(), ", ", rhsEv.dump(), ")");
+        __jas_throw(TypeError, "(", lhsEv.dump(), ", ", rhsEv.dump(), ")");
         return {};
       }
     }
@@ -160,12 +157,12 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
       _std_op applier;
       while (it != std::end(evals)) {
         Var nextEv = *it;
-        throwIf<EvaluationError>(nextEv.isNull(), "operate on null");
+        __jas_throw_if(EvaluationError, nextEv.isNull(), "operate on null");
         try {
           v = applier(v, nextEv.getValue<T>());
           std::swap(lastEv, nextEv);
         } catch (const TypeError&) {
-          throw_<TypeError>("(", lastEv.dump(), ", ", nextEv.dump(), ")");
+          __jas_throw(TypeError, "(", lastEv.dump(), ", ", nextEv.dump(), ")");
         }
         ++it;
       }
@@ -181,12 +178,12 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
       for (auto& e : evals) {
         Var nextEv = e;
         try {
-          v = applier(v, static_cast<bool>(nextEv.getValue<T>()));
+          v = applier(v, nextEv.getValue<T>());
           if (v == untilVal) {
             break;
           }
         } catch (const TypeError&) {
-          throw_<TypeError>("(", v, ", ", nextEv.dump(), ")");
+          __jas_throw(TypeError, "(", v, ", ", nextEv.dump(), ")");
         }
       }
       return (std::move(v));
