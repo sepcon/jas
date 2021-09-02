@@ -23,8 +23,8 @@ class Var {
   using String = jas::String;
   using List = std::vector<Var>;
   using Dict = std::map<String, Var, std::less<>>;
-  using Path = Path;
-  using PathView = PathView;
+  using Path = jas::Path;
+  using PathView = jas::PathView;
   using ValuePtr = std::shared_ptr<ValueType>;
   struct Null {};
 

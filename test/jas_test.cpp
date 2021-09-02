@@ -188,17 +188,20 @@ static EvalContextPtr make_eval_ctxt(Json data) {
 
 }  // namespace jas
 
+#ifdef WIN32
 #define _CRTDBG_MAP_ALLOC
 #include <crtdbg.h>
 #include <stdlib.h>
-
-using namespace jas;
 
 static void enableMemoryLeaksReport() {
   _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
   _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_DEBUG);
 }
+#else
+static void enableMemoryLeaksReport() {}
+#endif
 
+using namespace jas;
 int main(int argc, char** argv) {
   enableMemoryLeaksReport();
   CloggerSection test{JASSTR("JAS TEST")};

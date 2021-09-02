@@ -68,7 +68,7 @@ class HistoricalEvalContext : public BasicEvalContext {
   using CtxtFuncPtr = Var (HistoricalEvalContext::*)(const Var&);
   using CtxtFunctionsMap = std::map<String, CtxtFuncPtr, std::less<>>;
 
-  static CtxtFunctionsMap funcsmap_;
+  static const CtxtFunctionsMap& funcsMap();
 };
 
 }  // namespace jas

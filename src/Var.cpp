@@ -37,9 +37,6 @@ struct Var::ValueType : public ValueTypeBase {
   }
 };
 
-static bool _isNumber(const StringView &snum) {
-  return std::all_of(snum.begin(), snum.end(), ::isdigit);
-}
 template <class _NumberType>
 static std::optional<_NumberType> _toNumber(const StringView &snum) {
   _NumberType out;

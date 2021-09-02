@@ -1,10 +1,11 @@
 #pragma once
 
+#include <type_traits>
+
 namespace jas {
 struct Number {
   using UnderType = double;
 
-  // Number(bool) = delete;
   template <class T, std::enable_if_t<std::is_floating_point_v<T> ||
                                           std::is_integral_v<T>,
                                       bool> = true>
@@ -22,15 +23,11 @@ struct Number {
   Number& operator/=(const Number& other);
   Number& operator%=(const Number& other);
 
-  template <class T>
-  operator T() const {
-    if constexpr (std::is_integral_v<T>) {
-      return static_cast<T>(std::trunc(value));
-    } else if constexpr (std::is_floating_point_v<T>) {
-      return static_cast<T>(value);
-    } else {
-      static_assert(false, "Invalid conversion");
-    }
+  template <class T, std::enable_if_t<std::is_integral_v<T> ||
+                                          std::is_floating_point_v<T>,
+                                      bool> = true>
+  constexpr operator T() const {
+    return static_cast<T>(value);
   }
 
   UnderType value = 0.0;

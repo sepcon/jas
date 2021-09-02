@@ -54,16 +54,20 @@ static bool _hasHistoricalShape(const Var& data);
   }                                                        \
   (void*)(0)
 
-HistoricalEvalContext::CtxtFunctionsMap HistoricalEvalContext::funcsmap_ = {
-    {func_name::snchg, __ctxtm(snchg)},
-    {func_name::evchg, __ctxtm(evchg)},
-    {func_name::field, __ctxtm(field)},
-    {func_name::field_lv, __ctxtm(field_lv)},
-    {func_name::field_cv, __ctxtm(field_cv)},
-    {func_name::hfield, __ctxtm(hfield)},
-    {func_name::hfield2arr, __ctxtm(hfield2arr)},
-    {func_name::last_eval, __ctxtm(last_eval)},
-};
+const HistoricalEvalContext::CtxtFunctionsMap&
+HistoricalEvalContext::funcsMap() {
+  static const CtxtFunctionsMap funcs = {
+      {func_name::snchg, __ctxtm(snchg)},
+      {func_name::evchg, __ctxtm(evchg)},
+      {func_name::field, __ctxtm(field)},
+      {func_name::field_lv, __ctxtm(field_lv)},
+      {func_name::field_cv, __ctxtm(field_cv)},
+      {func_name::hfield, __ctxtm(hfield)},
+      {func_name::hfield2arr, __ctxtm(hfield2arr)},
+      {func_name::last_eval, __ctxtm(last_eval)},
+  };
+  return funcs;
+}
 
 HistoricalEvalContext::HistoricalEvalContext(HistoricalEvalContext* p,
                                              Var currentSnapshot,
@@ -82,7 +86,7 @@ std::shared_ptr<HistoricalEvalContext> HistoricalEvalContext::make(
 
 bool HistoricalEvalContext::functionSupported(
     const StringView& functionName) const {
-  if (funcsmap_.find(functionName) != std::end(funcsmap_)) {
+  if (funcsMap().find(functionName) != std::end(funcsMap())) {
     return true;
   } else {
     return _Base::functionSupported(functionName);
@@ -90,7 +94,7 @@ bool HistoricalEvalContext::functionSupported(
 }
 
 Var HistoricalEvalContext::invoke(const String& funcName, const Var& param) {
-  if (auto it = funcsmap_.find(funcName); it != std::end(funcsmap_)) {
+  if (auto it = funcsMap().find(funcName); it != std::end(funcsMap())) {
     return (this->*(it->second))(param);
   } else {
     return _Base::invoke(funcName, param);
@@ -354,9 +358,9 @@ bool HistoricalEvalContext::loadEvaluationResult(IStream& istrm) {
 
 std::vector<String> HistoricalEvalContext::supportedFunctions() const {
   std::vector<String> funcs;
-  std::transform(begin(funcsmap_), std::end(funcsmap_),
-                 std::back_insert_iterator(funcs),
-                 [](auto&& p) { return p.first; });
+  for (auto& [key, val] : funcsMap()) {
+    funcs.push_back(key);
+  }
   return funcs;
 }
 
