@@ -118,7 +118,9 @@ class Var {
   template <class T>
   bool isType() const;
   template <class T>
-  decltype(auto) getValue(T onFailure = {}) const;
+  T getValue(T onFailure) const;
+  template <class T>
+  decltype(auto) getValue() const;
   template <typename _callable>
   auto visitValue(_callable&& apply, bool throwWhenNull = false) const;
 
@@ -161,38 +163,46 @@ bool Var::isType() const {
   }
 }
 template <class T>
-decltype(auto) Var::getValue(T onFailure) const {
-  using PT = std::decay_t<T>;
-  if constexpr (std::is_same_v<PT, Bool>) {
-    return getBool(onFailure);
-  } else if constexpr (std::is_same_v<PT, Number>) {
-    return getNumber();
-  } else if constexpr (std::is_floating_point_v<PT>) {
-    return static_cast<T>(getDouble(onFailure));
-  } else if constexpr (std::is_same_v<PT, String>) {
-    return getString(onFailure);
-  } else if constexpr (std::is_integral_v<PT>) {
-    return static_cast<T>(getInt(onFailure));
-  } else if constexpr (std::is_same_v<PT, Dict>) {
-    return getDict(onFailure);
-  } else if constexpr (std::is_same_v<PT, List>) {
-    return getList(onFailure);
-  } else {
+T Var::getValue(T onFailure) const {
+  try {
+    return getValue<T>();
+  } catch (const TypeError&) {
     return onFailure;
   }
 }
+template <class T>
+decltype(auto) Var::getValue() const {
+  using PT = std::decay_t<T>;
+  if constexpr (std::is_same_v<PT, Bool>) {
+    return asBool();
+  } else if constexpr (std::is_same_v<PT, Number>) {
+    return asNumber();
+  } else if constexpr (std::is_floating_point_v<PT> || std::is_integral_v<PT>) {
+    return static_cast<T>(asNumber());
+  } else if constexpr (std::is_same_v<PT, String>) {
+    return asString();
+  } else if constexpr (std::is_same_v<PT, Dict>) {
+    return asDict();
+  } else if constexpr (std::is_same_v<PT, List>) {
+    return asList();
+  } else {
+    throw TypeError{};
+    return T{};
+  }
+}
+
 template <typename _callable>
 auto Var::visitValue(_callable&& apply, bool throwWhenNull) const {
   if (isBool()) {
-    return apply(getBool());
+    return apply(asBool());
   } else if (isNumber()) {
-    return apply(getNumber());
+    return apply(asNumber());
   } else if (isString()) {
-    return apply(getString());
+    return apply(asString());
   } else if (isList()) {
-    return apply(getList());
+    return apply(asList());
   } else if (isDict()) {
-    return apply(getDict());
+    return apply(asDict());
   } else {
     __jas_throw_if(TypeError, throwWhenNull, "vitsit null");
     return apply(Null{});

@@ -29,11 +29,19 @@ struct Var::ValueType : public ValueTypeBase {
   decltype(auto) asBase() const { return static_cast<const _Base &>(*this); }
   template <class T>
   decltype(auto) get() {
-    return std::get<T>(asBase());
+    try {
+      return std::get<T>(asBase());
+    } catch (const std::bad_variant_access &) {
+      throw TypeError{};
+    }
   }
   template <class T>
   decltype(auto) get() const {
-    return std::get<T>(asBase());
+    try {
+      return std::get<T>(asBase());
+    } catch (const std::bad_variant_access &) {
+      throw TypeError{};
+    }
   }
 };
 

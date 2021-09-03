@@ -6,9 +6,9 @@ true
 false
 {"@and":[0,0]}
 false
-{"@not":[1]}
+{"@not":1}
 false
-{"@not":[0]}
+{"@not":0}
 true
 {"@or":[0,1]}
 true
@@ -16,6 +16,8 @@ true
 true
 {"@or":[0,0]}
 false
+{"@and":[true,1]}
+{"@exception":"TypeError"}
 {"@and":[true,true]}
 true
 {"@and":[false,true]}

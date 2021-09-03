@@ -62,3 +62,7 @@ false
 1
 {"$var": 5, "@s_modulus": ["$var", 5]}
 0
+{"@plus": [1,"2"]}
+{"@exception": "EvaluationError"}
+{"@plus": [1,true]}
+{"@exception": "EvaluationError"}
