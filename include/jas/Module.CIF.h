@@ -31,8 +31,6 @@ Var empty(const Var&);
 Var not_empty(const Var&);
 Var abs(const Var&);
 
-std::shared_ptr<FunctionModuleIF> getModule();
-
 }  // namespace cif
 }  // namespace mdl
 }  // namespace jas

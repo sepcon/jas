@@ -82,7 +82,7 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
   void stackPush(String ctxtID, const Evaluable* evb, Var contextData = {});
   void stackPop();
   void stackReturn(Var val);
-  void stackReturn(Var val, const Evaluable& ev);
+  void stackReturn(Var val, const UseStackEvaluable& ev);
   inline void stackDebugReturnVal(const Var& e, const Evaluable* evb);
   Var& stackReturnedVal();
   Var stackTakeReturnedVal();

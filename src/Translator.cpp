@@ -30,54 +30,6 @@ struct EvaluableInfo {
   String id;
 };
 
-struct JasSymbol {
-  constexpr JasSymbol(CharType prefix = 0) : prefix{prefix} {}
-  bool matchPrefix(const String& str) const {
-    if (!str.empty() && str[0] == prefix[0]) {
-      return true;
-    } else {
-      return false;
-    }
-  }
-
-  CharType prefix[1];
-};
-
-bool operator<(const JasSymbol& sym, const String& pair) {
-  if (sym.matchPrefix(pair)) {
-    return false;
-  } else {
-    return sym.prefix < pair;
-  }
-}
-
-bool operator<(const String& str, const JasSymbol& sym) {
-  if (sym.matchPrefix(str)) {
-    return false;
-  } else {
-    return str < sym.prefix;
-  }
-}
-
-template <class _Sequence>
-struct RangeIterable {
-  using Iterator = typename _Sequence::const_iterator;
-  RangeIterable(Iterator b, Iterator e) : b_(b), e_(e) {}
-  RangeIterable(std::pair<Iterator, Iterator> p) : b_(p.first), e_(p.second) {}
-
-  auto begin() { return b_; }
-  auto begin() const { return b_; }
-  auto end() { return e_; }
-  auto end() const { return e_; }
-  bool empty() const { return b_ != e_; }
-
-  Iterator b_, e_;
-};
-using VarDictRangeIterable = RangeIterable<const Var::Dict>;
-
-inline static const JasSymbol symbol_var{'$'};
-inline static const JasSymbol symbol_op{'@'};
-
 using std::make_shared;
 using std::move;
 using OptionalEvbInfo = std::optional<EvaluableInfo>;

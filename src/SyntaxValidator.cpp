@@ -99,7 +99,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
     }
     return false;
   }
-  bool decorateId(const Evaluable& e) {
+  bool decorateId(const UseStackEvaluable& e) {
     if (!e.id.empty()) {
       os_ << prefix::variable << e.id << JASSTR("=");
       return true;
@@ -107,7 +107,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
     return false;
   }
 
-  bool _evalStackEvb(const __UseStackEvaluable& evb) {
+  bool _evalStackEvb(const UseStackEvaluable& evb) {
     auto ret = decorateId(evb);
     ret |= dumpstackVariables(evb.stackVariables);
     return ret;
@@ -162,7 +162,8 @@ class SyntaxValidatorImpl : public EvaluatorBase {
         os_ << bookMarkError(
             strJoin("First argument of `", op.type, "` must be variable"));
       } else {
-        os_ << prefix::variable << op.params.front()->id;
+        os_ << prefix::variable
+            << static_cast<const Variable*>(op.params.front().get())->name;
       }
       os_ << op.type;
       if (op.params.size() >= 2) {
@@ -231,7 +232,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   }
 
   void eval(const VariableFieldQuery& vfq) override {
-    os_ << vfq.id << "[";
+    os_ << vfq.name << "[";
     if (!vfq.field_path.empty()) {
       auto it = std::begin(vfq.field_path);
       _eval(it->get());
@@ -241,17 +242,17 @@ class SyntaxValidatorImpl : public EvaluatorBase {
       }
     } else {
       os_ << bookMarkError(
-          strJoin("No key or path for accessing variable `", vfq.id, "`"));
+          strJoin("No key or path for accessing variable `", vfq.name, "`"));
     }
     os_ << "]";
   }
 
   void eval(const Variable& rv) override {
     os_ << prefix::variable;
-    if (rv.id.empty()) {
+    if (rv.name.empty()) {
       os_ << bookMarkError(JASSTR("a `Property Name` must not be empty"));
     } else {
-      os_ << rv.id;
+      os_ << rv.name;
     }
   }
 
@@ -259,7 +260,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
     if (evb) {
       if (evb->useStack()) {
         auto shouldClose = false;
-        if (_evalStackEvb(static_cast<const __UseStackEvaluable&>(*evb))) {
+        if (_evalStackEvb(static_cast<const UseStackEvaluable&>(*evb))) {
           shouldClose = true;
           os_ << "(";
         }

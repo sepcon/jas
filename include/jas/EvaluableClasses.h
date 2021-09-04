@@ -48,7 +48,6 @@ inline bool operator<(const VariableInfo& first, const VariableInfo& second) {
   return (first.name < second.name) ||
          ((first.name == second.name) && (first.type < second.type));
 }
-
 inline bool operator<(const VariableInfo& vi, const String& name) {
   return vi.name < name;
 }
@@ -88,71 +87,63 @@ bool isType(const EvaluablePtr& evb) {
   return isType<_Evaluable>(evb.get());
 }
 
-template <class _SpecEvaluable>
-struct __BeEvaluable : public Evaluable {
-  __BeEvaluable(String id = {}) : Evaluable(std::move(id)) {}
-  void accept(EvaluatorBase* e) const override {
-    e->eval(static_cast<const _SpecEvaluable&>(*this));
-  }
-};
-
-struct __UseStackEvaluable : public Evaluable {
-  __UseStackEvaluable(StackVariablesPtr variables, String id = {})
-      : Evaluable(std::move(id)), stackVariables{std::move(variables)} {}
+struct UseStackEvaluable : public Evaluable {
+  UseStackEvaluable(StackVariablesPtr variables, String id = {})
+      : id(std::move(id)), stackVariables{std::move(variables)} {}
   bool useStack() const override { return true; }
+  String id;
   StackVariablesPtr stackVariables;
 };
 
 template <class _SpecEvaluable>
-struct __UseStackEvaluableT : public __UseStackEvaluable {
+struct UseStackEvaluableT : public UseStackEvaluable {
   void accept(EvaluatorBase* e) const override {
     e->eval(static_cast<const _SpecEvaluable&>(*this));
   }
-  using __Base = __UseStackEvaluable;
+  using __Base = UseStackEvaluable;
   using __Base::__Base;
 };
 
-struct __StacklessEvaluable : public Evaluable {
-  __StacklessEvaluable(String id = {}) : Evaluable(std::move(id)) {}
+struct StacklessEvaluable : public Evaluable {
   bool useStack() const override { return false; }
 };
 
 template <class _SpecEvaluable>
-struct __StacklessEvaluableT : public __StacklessEvaluable {
-  using __StacklessEvaluable::__StacklessEvaluable;
+struct StacklessEvaluableT : public StacklessEvaluable {
+  using StacklessEvaluable::StacklessEvaluable;
   void accept(EvaluatorBase* e) const override {
     e->eval(static_cast<const _SpecEvaluable&>(*this));
   }
 };
 
-struct Constant : public __StacklessEvaluableT<Constant> {
+struct Constant : public StacklessEvaluableT<Constant> {
   template <class T>
   Constant(T&& v) : value(std::forward<T>(v)) {}
   Var value;
 };
 
-struct EvaluableDict : public __UseStackEvaluableT<EvaluableDict> {
-  using __Base = __UseStackEvaluableT<EvaluableDict>;
+struct EvaluableDict : public UseStackEvaluableT<EvaluableDict> {
+  using __Base = UseStackEvaluableT<EvaluableDict>;
   using value_type = std::map<String, EvaluablePtr>;
   EvaluableDict(value_type v = {}, StackVariablesPtr cp = {})
       : __Base(std::move(cp)), value{std::move(v)} {}
   value_type value;
 };
 
-struct EvaluableList : public __StacklessEvaluableT<EvaluableList> {
+struct EvaluableList : public StacklessEvaluableT<EvaluableList> {
   using value_type = std::vector<EvaluablePtr>;
   EvaluableList(value_type v = {}) : value{std::move(v)} {}
   value_type value;
 };
 
 template <class _SubType, class _Type>
-struct _OperatorBase : public __UseStackEvaluableT<_SubType> {
+struct _OperatorBase : public UseStackEvaluableT<_SubType> {
   using Param = Evaluable;
   using ParamPtr = EvaluablePtr;
   using Params = Evaluables;
   using OperatorType = _Type;
   _OperatorBase(String id, OperatorType t, Params p, StackVariablesPtr cp)
-      : __UseStackEvaluableT<_SubType>(std::move(cp), std::move(id)),
+      : UseStackEvaluableT<_SubType>(std::move(cp), std::move(id)),
         type{t},
         params{std::move(p)} {}
   void add_param(ParamPtr p) { params.push_back(std::move(p)); }
@@ -375,10 +366,10 @@ inline OStream& operator<<(OStream& os, lsaot o) {
   return os;
 }
 
-struct ListAlgorithm : public __UseStackEvaluableT<ListAlgorithm> {
+struct ListAlgorithm : public UseStackEvaluableT<ListAlgorithm> {
   ListAlgorithm(String id, lsaot t, EvaluablePtr c, EvaluablePtr list = {},
                 StackVariablesPtr cp = {})
-      : __UseStackEvaluableT<ListAlgorithm>(std::move(cp), std::move(id)),
+      : UseStackEvaluableT<ListAlgorithm>(std::move(cp), std::move(id)),
         type(t),
         list(std::move(list)),
         cond(std::move(c)) {}
@@ -389,10 +380,10 @@ struct ListAlgorithm : public __UseStackEvaluableT<ListAlgorithm> {
 };
 
 template <class _SpecificFI>
-struct FunctionInvocationBase : public __UseStackEvaluableT<_SpecificFI> {
+struct FunctionInvocationBase : public UseStackEvaluableT<_SpecificFI> {
   FunctionInvocationBase(String id, String name, EvaluablePtr param,
                          StackVariablesPtr cp = {})
-      : __UseStackEvaluableT<_SpecificFI>(std::move(cp), std::move(id)),
+      : UseStackEvaluableT<_SpecificFI>(std::move(cp), std::move(id)),
         name(std::move(name)),
         param(std::move(param)) {}
 
@@ -419,17 +410,20 @@ struct EvaluatorFI : public FunctionInvocationBase<EvaluatorFI> {
   using _Base::_Base;
 };
 
-struct VariableFieldQuery : public __StacklessEvaluableT<VariableFieldQuery> {
-  using _Base = __StacklessEvaluableT<VariableFieldQuery>;
+struct VariableFieldQuery : public StacklessEvaluableT<VariableFieldQuery> {
+  using _Base = StacklessEvaluableT<VariableFieldQuery>;
   VariableFieldQuery(String name, std::vector<EvaluablePtr> path)
-      : _Base(std::move(name)), field_path(std::move(path)) {}
+      : name(std::move(name)), field_path(std::move(path)) {}
 
+  String name;
   std::vector<EvaluablePtr> field_path;
 };
 
-struct Variable : public __StacklessEvaluableT<Variable> {
-  using _Base = __StacklessEvaluableT<Variable>;
+struct Variable : public StacklessEvaluableT<Variable> {
+  using _Base = StacklessEvaluableT<Variable>;
   using _Base::_Base;
+  Variable(String name) : name(std::move(name)) {}
+  String name;
 };
 
 template <class T>

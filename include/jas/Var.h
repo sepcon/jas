@@ -115,12 +115,19 @@ class Var {
   Bool getBool(Bool onFailure = false) const;
   const List getList(List onFailure = {}) const;
   const Dict getDict(Dict onFailure = {}) const;
+
   template <class T>
   bool isType() const;
+
   template <class T>
   T getValue(T onFailure) const;
+
   template <class T>
   decltype(auto) getValue() const;
+
+  template <class T>
+  operator T() const;
+
   template <typename _callable>
   auto visitValue(_callable&& apply, bool throwWhenNull = false) const;
 
@@ -189,6 +196,10 @@ decltype(auto) Var::getValue() const {
     throw TypeError{};
     return T{};
   }
+}
+template <class T>
+Var::operator T() const {
+  return getValue<T>();
 }
 
 template <typename _callable>

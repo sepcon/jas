@@ -225,9 +225,15 @@ void SyntaxEvaluatorImpl::eval(const ArthmSelfAssignOperator& op) {
   __MC_BASIC_OPERATION_EVAL_START(op)
   evaluateVariables(op.stackVariables);
   auto var = op.params.front();
+  __stackUnwindThrowIf(EvaluationError, !isType<Variable>(var.get()),
+                       "first argument of operator `", op.type,
+                       "` must be a variable");
+
   auto varVal = _evalRet(var.get());
-  __stackUnwindThrowIf(EvaluationError, varVal.isNull(), "Variable ", var->id,
-                       " has not initialized yet");
+  __stackUnwindThrowIf(EvaluationError, varVal.isNull(), "Variable ",
+                       static_cast<const Variable*>(var.get())->name,
+                       " has not been initialized yet");
+
   auto paramVal = _evalRet(op.params.back().get());
   __stackUnwindThrowIf(EvaluationError, paramVal.isNull(),
                        "Parameter to operator `", op.type,
@@ -407,7 +413,7 @@ void SyntaxEvaluatorImpl::eval(const ModuleFI& fi) {
 }
 
 void SyntaxEvaluatorImpl::eval(const VariableFieldQuery& query) {
-  auto& varname = query.id;
+  auto& varname = query.name;
   auto var = _queryOrEvalVariable(varname);
   do {
     if (var->isNull()) {
@@ -435,7 +441,7 @@ void SyntaxEvaluatorImpl::eval(const VariableFieldQuery& query) {
 }
 
 void SyntaxEvaluatorImpl::eval(const Variable& prop) {
-  stackReturn(*_queryOrEvalVariable(prop.id));
+  stackReturn(*_queryOrEvalVariable(prop.name));
 }
 
 Var* SyntaxEvaluatorImpl::_queryOrEvalVariable(const String& variableName) {
@@ -517,7 +523,7 @@ void SyntaxEvaluatorImpl::stackReturn(Var val) {
   stackTopFrame().returnedValue = move(val);
 }
 
-void SyntaxEvaluatorImpl::stackReturn(Var val, const Evaluable& ev) {
+void SyntaxEvaluatorImpl::stackReturn(Var val, const UseStackEvaluable& ev) {
   if (!ev.id.empty()) {
     stackTopContext()->setVariable(ev.id, val);
   }
