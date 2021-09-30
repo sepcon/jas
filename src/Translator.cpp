@@ -578,7 +578,7 @@ struct TranslatorImpl {
   EvaluablePtr _translateVariableFieldQuery(const String& expression) {
     using namespace std;
     static const Regex rgxVariableFieldQuery{JASSTR(
-        R"_regex(\$([a-zA-Z_]+[0-9]*)\[((?:\$[a-zA-Z_]+[0-9]*|[@:a-zA-Z_0-9\-]+|[\/]*)+)\])_regex")};
+        R"_regex(\$(\.?[a-zA-Z_]+[0-9]*)\[((?:\$[a-zA-Z_]+[0-9]*|[@:a-zA-Z_0-9\-]+|[\/]*)+)\])_regex")};
     static const Regex rgxField{JASSTR(R"_regex([^\/]+)_regex")};
 
     assert(isVariableLike(expression));
@@ -899,9 +899,16 @@ EvaluablePtr Translator::translate(EvalContextPtr ctxt, const Var& jas,
   return impl_->translate(jas, strategy);
 }
 
-Var Translator::reconstructJAS(EvalContextPtr ctxt, const Var& jas) {
+Var Translator::reconstructJAS(EvalContextPtr ctxt, const Var& script) {
   impl_->context_ = move(ctxt);
-  return impl_->reconstructJAS(jas);
+  if (script.contains(version_expression_key)) {
+    auto scriptVersion = script.at(version_expression_key);
+    __jas_throw_if(SyntaxError,
+                   mdl::cif::gt_ver(Var::List{scriptVersion, jas::version}),
+                   "Script version is higher than current jas::version: ",
+                   scriptVersion.dump(), " > ", jas::version);
+  }
+  return impl_->reconstructJAS(script);
 }
 
 const std::set<StringView>& Translator::evaluableSpecifiers() {

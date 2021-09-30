@@ -21,7 +21,7 @@ class Translator {
   ~Translator();
   EvaluablePtr translate(EvalContextPtr ctxt, const Var& jas,
                          Strategy strategy = Strategy::AllowShorthand);
-  Var reconstructJAS(EvalContextPtr ctxt, const Var& jas);
+  Var reconstructJAS(EvalContextPtr ctxt, const Var& script);
   static const std::set<StringView>& evaluableSpecifiers();
 
   TranslatorImpl* impl_ = nullptr;
