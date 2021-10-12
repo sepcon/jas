@@ -174,7 +174,7 @@ void SyntaxEvaluatorImpl::eval(const EvaluableList& v) {
   auto evaluated = Var::list();
   auto itemIdx = 0;
   for (auto& val : v.value) {
-    evaluated.add(_evalRet(val.get(), strJoin(itemIdx)));
+    evaluated.add(_evalRet(val.get(), strJoin(itemIdx++)));
   }
   stackReturn(move(evaluated));
 }
@@ -225,19 +225,19 @@ void SyntaxEvaluatorImpl::eval(const ArthmSelfAssignOperator& op) {
   __MC_BASIC_OPERATION_EVAL_START(op)
   evaluateVariables(op.stackVariables);
   auto var = op.params.front();
+  auto opStr = strJoin(op.type);
   __stackUnwindThrowIf(EvaluationError, !isType<Variable>(var.get()),
-                       "first argument of operator `", op.type,
+                       "first argument of operator `", opStr,
                        "` must be a variable");
 
-  auto varVal = _evalRet(var.get());
+  auto varVal = _evalRet(var.get(), opStr);
   __stackUnwindThrowIf(EvaluationError, varVal.isNull(), "Variable ",
                        static_cast<const Variable*>(var.get())->name,
                        " has not been initialized yet");
 
-  auto paramVal = _evalRet(op.params.back().get());
+  auto paramVal = _evalRet(op.params.back().get(), opStr);
   __stackUnwindThrowIf(EvaluationError, paramVal.isNull(),
-                       "Parameter to operator `", op.type,
-                       "` evaluated to null");
+                       "Parameter to operator `", opStr, "` evaluated to null");
 
   varVal.detach();
   std::vector<Var> operands = {varVal, paramVal};
@@ -341,12 +341,12 @@ void SyntaxEvaluatorImpl::eval(const ListAlgorithm& op) {
   evaluateVariables(op.stackVariables);
 
   if (op.list) {
-    vlist = _evalRet(op.list.get());
+    vlist = _evalRet(op.list.get(), strJoin(op.type));
   }
 
-  __stackUnwindThrowIf(
-      EvaluationError, !vlist.isList(),
-      "`@list` input of list operation was not evaluated to array type");
+  __stackUnwindThrowIf(EvaluationError, !vlist.isList(),
+                       "`@list` input of ListAlgorithm ", op.type,
+                       " was not evaluated to array type");
 
   auto& list = vlist.asList();
   int itemIdx = 0;
@@ -473,8 +473,12 @@ Var* SyntaxEvaluatorImpl::_queryOrEvalVariable(const String& variableName) {
 void SyntaxEvaluatorImpl::_evalOnStack(const Evaluable* e, String ctxtID,
                                        Var ctxtData) {
   assert(e);
-  __MC_STACK_START(move(ctxtID), e, std::move(ctxtData));
+  __MC_STACK_START(
+      strJoin(move(ctxtID),
+              static_cast<const UseStackEvaluable*>(e)->typeID()),
+      e, std::move(ctxtData));
   e->accept(this);
+
   __MC_STACK_END
 }
 
@@ -587,7 +591,7 @@ Var* SyntaxEvaluatorImpl::evaluateSingleVar(const EvalContextPtr& ctxt,
                                             const String& varname,
                                             const VariableInfo& vi) {
   vi.state = VariableInfo::Evaluating;
-  auto val = _evalRet(vi.variable.get());
+  auto val = _evalRet(vi.variable.get(), vi.name);
   vi.state = VariableInfo::Evaluated;
   if (vi.type == VariableInfo::Declaration) {
     return ctxt->setVariable(varname, move(val));

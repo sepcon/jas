@@ -169,16 +169,23 @@ Var HistoricalEvalContext::evchg(const Var& json) {
   __jas_func_throw_invalidargs_if(
       !json.isString(), "variable name must be non-empty string", json);
 
-  auto propID = json.asString();
-  __jas_ni_func_throw_invalidargs_if(propID.empty(),
+  auto variableName = json.asString();
+  __jas_ni_func_throw_invalidargs_if(variableName.empty(),
                                      "variable name must not be empty");
+  __jas_ni_func_throw_invalidargs_if(
+      variableName.front() != TobeStoredVariablePrefix,
+      strJoin("Only variable with prefix `", TobeStoredVariablePrefix,
+              "` can be check evchg, given name: \"", variableName,
+              "\" -> must be \"", TobeStoredVariablePrefix, variableName,
+              "\""));
   Var changed = true;
 
-  if (auto itVar = variables_.find(propID); itVar != std::end(variables_)) {
+  if (auto itVar = variables_.find(variableName);
+      itVar != std::end(variables_)) {
     auto& levr = *lastEvalResult();
-    changed = levr.getAt(contextPath(propID)) != itVar->second;
+    changed = levr.getAt(contextPath(variableName)) != itVar->second;
   } else if (parent_) {
-    changed = parent()->evchg(propID);
+    changed = parent()->evchg(variableName);
   } else {
     changed = false;
   }
@@ -288,8 +295,8 @@ Var HistoricalEvalContext::_hfield(const String& path, const String& iid) {
     }
     return output;
   } else {
-    auto oldListSize = oldList.size();
-    auto newListSize = newList.size();
+    auto oldListSize = oldList.isList() ? oldList.size() : 0;
+    auto newListSize = newList.isList() ? newList.size() : 0;
     auto minSize = std::min(oldListSize, newListSize);
     auto output = Var::list();
     for (size_t i = 0; i < minSize; ++i) {
@@ -331,7 +338,7 @@ void HistoricalEvalContext::syncEvalResult() {
     auto& evr = *lastEvalResult();
     auto thisCtxtPath = contextPath();
     for (auto& [var, val] : variables_) {
-      if (!val.isNull() && var.front() != TemporaryVariablePrefix) {
+      if (!val.isNull() && var.front() == TobeStoredVariablePrefix) {
         evr[strJoin(thisCtxtPath, cstr::path_sep, var)] = val;
       }
     }

@@ -91,6 +91,8 @@ struct UseStackEvaluable : public Evaluable {
   UseStackEvaluable(StackVariablesPtr variables, String id = {})
       : id(std::move(id)), stackVariables{std::move(variables)} {}
   bool useStack() const override { return true; }
+  virtual const char* typeID() const = 0;
+
   String id;
   StackVariablesPtr stackVariables;
 };
@@ -100,6 +102,9 @@ struct UseStackEvaluableT : public UseStackEvaluable {
   void accept(EvaluatorBase* e) const override {
     e->eval(static_cast<const _SpecEvaluable&>(*this));
   }
+
+  const char* typeID() const override { return typeid(_SpecEvaluable).name(); }
+
   using __Base = UseStackEvaluable;
   using __Base::__Base;
 };

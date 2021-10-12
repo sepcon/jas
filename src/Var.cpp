@@ -99,7 +99,7 @@ static _Var *_find(_Var *j, const Var::Path &path) {
 }
 
 #define __Var_type_check(Type)                                              \
-  __jas_throw_if(TypeError, !is##Type(), "Trying get ", #Type, "from non ", \
+  __jas_throw_if(TypeError, !is##Type(), "Trying get ", #Type, " from non ", \
                  #Type, " type")
 
 #define __Var_type_check_after_try_become(Type) \
