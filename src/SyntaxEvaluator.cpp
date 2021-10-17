@@ -4,8 +4,7 @@
 
 namespace jas {
 
-SyntaxEvaluator::SyntaxEvaluator(ModuleManager* moduleMgr)
-    : impl_{new SyntaxEvaluatorImpl(moduleMgr)} {}
+SyntaxEvaluator::SyntaxEvaluator() : impl_{new SyntaxEvaluatorImpl} {}
 
 SyntaxEvaluator::~SyntaxEvaluator() { delete impl_; }
 

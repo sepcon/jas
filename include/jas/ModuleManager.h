@@ -6,9 +6,11 @@ namespace jas {
 
 class ModuleManager {
  public:
-  using ModuleMap = std::map<String, FunctionModulePtr, std::less<>>;
+  using ModuleMap = std::multimap<String, FunctionModulePtr, std::less<>>;
   bool addModule(const String& moduleName, FunctionModulePtr mdl) noexcept;
   bool removeModule(const String& moduleName) noexcept;
+  bool removeModule(const String& moduleName,
+                    const FunctionModulePtr& mdl) noexcept;
   bool hasModule(const StringView& moduleName) const noexcept;
   FunctionModulePtr getModule(const StringView& moduleName);
   FunctionModulePtr findModuleByFuncName(const StringView& funcName);

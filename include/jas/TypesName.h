@@ -6,15 +6,16 @@
 namespace jas {
 
 inline const CharType* nameOfType(std::type_index typeidx) {
-  static std::map<std::type_index, const char*> type2name = {
+  static std::map<std::type_index, const CharType*> type2name = {
       {typeid(String), JASSTR("String")},
-      {typeid(Var::Dict), JASSTR("Dictionary")},
+      {typeid(Var::Dict), JASSTR("Dict")},
       {typeid(Var::List), JASSTR("List")},
       {typeid(Var), JASSTR("Variant")},
-      {typeid(bool), JASSTR("boolean")},
-      {typeid(double), JASSTR("real number")},
-      {typeid(int), JASSTR("integer")},
-      {typeid(Var::Ref), JASSTR("Reference")},
+      {typeid(bool), JASSTR("Boolean")},
+      {typeid(double), JASSTR("Real number")},
+      {typeid(int), JASSTR("Integer")},
+      {typeid(Number), JASSTR("Number")},
+      {typeid(Var::Ref), JASSTR("Ref")},
   };
 
   if (auto it = type2name.find(typeidx); it != std::end(type2name)) {

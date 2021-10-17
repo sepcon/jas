@@ -21,8 +21,8 @@ using IntType = int64_t;
 Number &Number::operator%=(const Number &other) {
   __jas_throw_if(InvalidArgument, !this->isInt() || !other.isInt(),
                  "% applied only on integer");
-  value = static_cast<UnderType>(static_cast<IntType>(*this) %
-                                 static_cast<IntType>(other));
+  value = static_cast<UnderlyingType>(static_cast<IntType>(*this) %
+                                      static_cast<IntType>(other));
   return *this;
 }
 

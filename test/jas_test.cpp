@@ -57,7 +57,7 @@ static int run_all_tests(const fs::path& testcase_dir) {
       }
       if (load_test_cases) {
         CLoggerTimerSection testFileSection{
-            strJoin("Testing file: ", test_data_file)};
+            strJoin("Testing file: ", test_data_file.filename())};
         try {
           auto tcs = load_test_cases(test_data_file);
           for (auto& tc : tcs) {

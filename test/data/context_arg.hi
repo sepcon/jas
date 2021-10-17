@@ -1,0 +1,21 @@
+"@return:$1"
+1
+1
+"@return:$*"
+"hello"
+["hello", null]
+"@return:$#"
+"hello"
+2
+"$!var"
+"hello"
+{"@exception": "SyntaxError"}
+"@return:$*[0/key]"
+{"key": 1}
+1
+"@return:$2"
+[1]
+null
+"@return:$256"
+[1,2]
+{"@exception":"SyntaxError"}

@@ -13,7 +13,7 @@ class ModuleManager;
 class Evaluable;
 class SyntaxEvaluator {
  public:
-  SyntaxEvaluator(ModuleManager* moduleMgr);
+  SyntaxEvaluator();
   ~SyntaxEvaluator();
   Var evaluate(const Evaluable& e, EvalContextPtr rootContext = nullptr);
   Var evaluate(const EvaluablePtr& e, EvalContextPtr rootContext = nullptr);

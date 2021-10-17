@@ -2,9 +2,11 @@
 
 #include <charconv>
 #include <optional>
+#include <typeindex>
 #include <variant>
 
 #include "jas/Number.h"
+#include "jas/TypesName.h"
 
 namespace jas {
 using std::make_shared;
@@ -20,29 +22,64 @@ using List = Var::List;
 using Dict = Var::Dict;
 using Ref = Var::Ref;
 
-using ValueTypeBase = std::variant<Null, Bool, Number, String, List, Dict, Ref>;
+#define VAR_POSIB_TYPES Null, Bool, Number, String, List, Dict, Ref
+enum class VarTypeIdx : size_t { VAR_POSIB_TYPES };
+
+static constexpr const CharType *indexToType(VarTypeIdx idx) {
+  const CharType *ret = "";
+  switch (idx) {
+    case jas::VarTypeIdx::Bool:
+      ret = "Boolean";
+      break;
+    case jas::VarTypeIdx::Number:
+      ret = "Number";
+      break;
+    case jas::VarTypeIdx::String:
+      ret = "String";
+      break;
+    case jas::VarTypeIdx::List:
+      ret = "List";
+      break;
+    case jas::VarTypeIdx::Dict:
+      ret = "Dict";
+      break;
+    case jas::VarTypeIdx::Ref:
+      ret = "Ref";
+      break;
+    case VarTypeIdx::Null:
+      ret = "Null";
+      break;
+  }
+  return ret;
+}
+
+using ValueTypeBase = std::variant<VAR_POSIB_TYPES>;
+
 struct Var::ValueType : public ValueTypeBase {
   using _Base = ValueTypeBase;
   using _Base::_Base;
 
   decltype(auto) asBase() { return static_cast<_Base &>(*this); }
   decltype(auto) asBase() const { return static_cast<const _Base &>(*this); }
+
+#define __var_get_impl(T)                                                     \
+  try {                                                                       \
+    return std::get<T>(asBase());                                             \
+  } catch (const std::bad_variant_access &) {                                 \
+    __jas_throw(TypeError, "Trying cast to type `", nameOfType<T>(),          \
+                "` from `",                                                   \
+                indexToType(static_cast<VarTypeIdx>(asBase().index())), "`"); \
+  }
+
   template <class T>
   decltype(auto) get() {
-    try {
-      return std::get<T>(asBase());
-    } catch (const std::bad_variant_access &) {
-      throw TypeError{};
-    }
+    __var_get_impl(T);
   }
   template <class T>
   decltype(auto) get() const {
-    try {
-      return std::get<T>(asBase());
-    } catch (const std::bad_variant_access &) {
-      throw TypeError{};
-    }
+    __var_get_impl(T);
   }
+#undef __var_get_impl
 };
 
 template <class _NumberType>
@@ -98,7 +135,7 @@ static _Var *_find(_Var *j, const Var::Path &path) {
   return jas::_find(j, std::begin(path), std::end(path));
 }
 
-#define __Var_type_check(Type)                                              \
+#define __Var_type_check(Type)                                               \
   __jas_throw_if(TypeError, !is##Type(), "Trying get ", #Type, " from non ", \
                  #Type, " type")
 
@@ -551,4 +588,5 @@ bool operator<=(const Var &first, const Var &second) {
   return second == first || first < second;
 }
 
+OStream &operator<<(OStream &os, const Var &var) { return os << var.dump(); }
 }  // namespace jas

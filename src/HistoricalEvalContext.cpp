@@ -70,10 +70,13 @@ HistoricalEvalContext::funcsMap() {
 }
 
 HistoricalEvalContext::HistoricalEvalContext(HistoricalEvalContext* p,
+                                             ContextArguments input, String id)
+    : _Base(p, move(id), move(input)) {}
+
+HistoricalEvalContext::HistoricalEvalContext(HistoricalEvalContext* p,
                                              Var currentSnapshot,
                                              Var lastSnapshot, String id)
-    : _Base(p, move(id)),
-      snapshots_{move(lastSnapshot), move(currentSnapshot)} {}
+    : _Base(p, move(id), {move(currentSnapshot), move(lastSnapshot)}) {}
 
 HistoricalEvalContext::~HistoricalEvalContext() { syncEvalResult(); }
 
@@ -108,26 +111,29 @@ Var HistoricalEvalContext::snapshotValue(const String& path,
 
 Var HistoricalEvalContext::snapshotValue(const String& path,
                                          const SnapshotIdx snidx) const {
-  if (!path.empty()) {
-    return snapshots_[snidx].getPath(path);
+  if (snidx < args_.size()) {
+    if (!path.empty()) {
+      return args_[snidx].getPath(path);
+    } else {
+      return args_[snidx];
+    }
   } else {
-    return snapshots_[snidx];
+    return {};
   }
 }
 
 EvalContextPtr HistoricalEvalContext::subContext(const String& ctxtID,
-                                                 const Var& input) {
-  if (!input.isNull() && _hasHistoricalShape(input)) {
-    return make_shared<HistoricalEvalContext>(
-        this, input.getAt(cstr::h_field_cur), input.getAt(cstr::h_field_lst),
-        ctxtID);
+                                                 ContextArguments input) {
+  if ((input.size() == 1) && _hasHistoricalShape(input[0])) {
+    return make(this, input[0].at(cstr::h_field_cur),
+                input[0].at(cstr::h_field_lst), ctxtID);
   } else {
-    return make_shared<HistoricalEvalContext>(this, input, Var{}, ctxtID);
+    return make_shared<HistoricalEvalContext>(this, input, ctxtID);
   }
 }
 
 bool HistoricalEvalContext::hasData() const {
-  return std::any_of(std::begin(snapshots_), std::end(snapshots_),
+  return std::any_of(std::begin(args_), std::end(args_),
                      [](auto& sn) { return !sn.isNull(); });
 }
 
@@ -154,14 +160,14 @@ String HistoricalEvalContext::contextPath(const String& variableName) const {
 
 Var HistoricalEvalContext::snchg(const Var& jpath) {
   __mc_invokeOnParentIfNoData(snchg, false, jpath);
-
   auto path = jpath.getString();
+
   if (path.empty()) {
-    return (snapshots_[SnapshotIdxNew] != snapshots_[SnapshotIdxOld]);
+    return !args_.empty() && ((args_.size() == 1 /*has only new snapshot*/) ||
+                              (args_[SnapshotIdxNew] != args_[SnapshotIdxOld]));
   } else {
-    auto& newsn = snapshots_[SnapshotIdxNew];
-    auto& oldsn = snapshots_[SnapshotIdxOld];
-    return (newsn.getAt(path) != oldsn.getAt(path));
+    return snapshotValue(path, SnapshotIdxNew) !=
+           snapshotValue(path, SnapshotIdxOld);
   }
 }
 
@@ -401,4 +407,5 @@ static bool _hasHistoricalShape(const Var& data) {
   return data.isDict() && data.size() == 2 &&
          data.contains(cstr::h_field_cur) && data.contains(cstr::h_field_lst);
 }
+
 }  // namespace jas

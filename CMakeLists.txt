@@ -37,7 +37,6 @@ include_directories(${JAS_INCLUDE_PATHS})
 add_library(jas
     include/jas/JASFacade.h
     include/jas/Version.h
-    include/jas/String.h
     include/jas/Exception.h
     include/jas/EvaluableClasses.h
     include/jas/Evaluable.h
@@ -50,7 +49,6 @@ add_library(jas
     include/jas/EvalContextIF.h
     include/jas/BasicEvalContext.h
     include/jas/HistoricalEvalContext.h
-    include/jas/Json.h
     include/jas/Keywords.h
     include/jas/Module.CIF.h
     include/jas/ConsoleLogger.h
@@ -76,6 +74,11 @@ add_library(jas
     src/Module.CIF.cpp
     src/Module.List.cpp
     src/Module.Dict.cpp
+    src/Module.Alg.cpp
+
+    src/details/EvaluationFrame.h
+    src/details/EvaluationStack.h
+    src/details/EvaluationStack.cpp
     )
 
 add_subdirectory(test)

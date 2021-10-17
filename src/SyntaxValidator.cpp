@@ -9,7 +9,7 @@
 
 namespace jas {
 
-class SyntaxValidatorImpl : public EvaluatorBase {
+class SyntaxValidatorImpl : public EvaluatorIF {
  public:
   SyntaxValidatorImpl() { os_ << std::boolalpha; }
 
@@ -83,16 +83,16 @@ class SyntaxValidatorImpl : public EvaluatorBase {
   void evaluate(const EvaluablePtr& e) { _eval(e.get()); }
   void evaluate(const Evaluable& e) { _eval(&e); }
 
-  bool dumpstackVariables(const StackVariablesPtr& params) {
+  bool dumpstackVariables(const LocalVariablesPtr& params) {
     if (params) {
       os_ << "set(";
       auto it = std::begin(*params);
-      os_ << "$" << it->name << '=';
-      this->evaluate(it->variable);
+      os_ << "$" << it->first << '=';
+      this->evaluate(it->second.value);
       for (; ++it != std::end(*params);) {
         os_ << JASSTR(",");
-        os_ << "$" << it->name << '=';
-        this->evaluate(it->variable);
+        os_ << "$" << it->first << '=';
+        this->evaluate(it->second.value);
       }
       os_ << ").then";
       return true;
@@ -109,7 +109,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
 
   bool _evalStackEvb(const UseStackEvaluable& evb) {
     auto ret = decorateId(evb);
-    ret |= dumpstackVariables(evb.stackVariables);
+    ret |= dumpstackVariables(evb.localVariables);
     return ret;
   }
 
@@ -154,6 +154,7 @@ class SyntaxValidatorImpl : public EvaluatorBase {
       dumpBinaryOp(op);
     }
   }
+
   void eval(const ArthmSelfAssignOperator& op) override {
     os_ << JASSTR("(");
     if (op.params.size() >= 1) {
@@ -231,18 +232,20 @@ class SyntaxValidatorImpl : public EvaluatorBase {
     _eval<ModuleFI>(fnc);
   }
 
-  void eval(const VariableFieldQuery& vfq) override {
-    os_ << vfq.name << "[";
-    if (!vfq.field_path.empty()) {
-      auto it = std::begin(vfq.field_path);
+  void eval(const MacroFI& macro) override { _eval<MacroFI>(macro); }
+
+  void eval(const ObjectPropertyQuery& vfq) override {
+    evaluate(vfq.object);
+    os_ << "[";
+    if (!vfq.propertyPath.empty()) {
+      auto it = std::begin(vfq.propertyPath);
       _eval(it->get());
-      while (++it != std::end(vfq.field_path)) {
+      while (++it != std::end(vfq.propertyPath)) {
         os_ << '/';
         _eval(it->get());
       }
     } else {
-      os_ << bookMarkError(
-          strJoin("No key or path for accessing variable `", vfq.name, "`"));
+      os_ << bookMarkError(strJoin("Empty property path"));
     }
     os_ << "]";
   }
@@ -253,6 +256,21 @@ class SyntaxValidatorImpl : public EvaluatorBase {
       os_ << bookMarkError(JASSTR("a `Property Name` must not be empty"));
     } else {
       os_ << rv.name;
+    }
+  }
+
+  void eval(const ContextArgument& arg) override {
+    os_ << prefix::variable << arg.index;
+  }
+
+  void eval(const ContextArgumentsInfo& arginf) override {
+    switch (arginf.type) {
+      case ContextArgumentsInfo::Type::ArgCount:
+        os_ << prefix::variable << prefix::argc;
+        break;
+      case ContextArgumentsInfo::Type::Args:
+        os_ << prefix::variable << prefix::args;
+        break;
     }
   }
 
@@ -353,4 +371,12 @@ String SyntaxValidator::generateSyntax(const EvaluablePtr& e) {
 }
 String SyntaxValidator::getReport() { return impl_->getReport(); }
 bool SyntaxValidator::hasError() const { return impl_->hasError(); }
+
+String SyntaxValidator::syntaxOf(const Evaluable& e) {
+  return SyntaxValidator{}.generateSyntax(e);
+}
+
+String SyntaxValidator::syntaxOf(const EvaluablePtr& e) {
+  return SyntaxValidator{}.generateSyntax(e);
+}
 }  // namespace jas

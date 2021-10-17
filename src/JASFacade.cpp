@@ -9,17 +9,20 @@
 __module_creating_prototype(cif);
 __module_creating_prototype(list);
 __module_creating_prototype(dict);
+__module_creating_prototype(alg);
 
 namespace jas {
 
 struct _JASFacade {
-  _JASFacade() : evaluator(&moduleMgr), parser(&moduleMgr) {
+  _JASFacade() : parser(&moduleMgr) {
     addModule(mdl::cif::getModule());
     addModule(mdl::list::getModule());
     addModule(mdl::dict::getModule());
+    addModule(mdl::alg::getModule());
   }
   _JASFacade(const Json &jasExpr, EvalContextPtr context) : _JASFacade() {
     this->context = move(context);
+    setExpression(jasExpr);
   }
 
   void setExpression(const Json &expr) {
@@ -71,7 +74,7 @@ Var JASFacade::evaluate() {
 
 String JASFacade::getTransformedSyntax() noexcept {
   assert(d_->evaluable);
-  return SyntaxValidator{}.generateSyntax(d_->evaluable);
+  return SyntaxValidator::syntaxOf(d_->evaluable);
 }
 
 void JASFacade::setContext(EvalContextPtr context) noexcept {

@@ -4,7 +4,6 @@
 #include "Var.h"
 
 namespace jas {
-class FunctionModuleIF;
 namespace mdl {
 namespace cif {
 

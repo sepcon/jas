@@ -7,6 +7,7 @@
 #include <numeric>
 #include <sstream>
 
+#include "details/EvaluationStack.h"
 #include "jas/EvaluableClasses.h"
 #include "jas/Exception.h"
 #include "jas/Keywords.h"
@@ -23,6 +24,24 @@ namespace jas {
 using std::make_shared;
 using std::move;
 using Vars = std::vector<Var>;
+struct EvaluatedOnReadValue;
+using EvaluatedOnReadValues = std::vector<EvaluatedOnReadValue>;
+
+struct EvaluatedOnReadValue {
+  EvaluatedOnReadValue(SyntaxEvaluatorImpl* delegate, const Evaluable& e)
+      : delegate_(delegate), e_(e) {}
+
+  operator Var() const {
+    if (ed_.isNull()) {
+      ed_ = delegate_->evalAndReturn(&e_);
+    }
+    return ed_;
+  }
+
+  SyntaxEvaluatorImpl* delegate_;
+  const Evaluable& e_;
+  mutable Var ed_;
+};
 
 template <class _Exception>
 struct StackUnwin : public _Exception {
@@ -62,12 +81,15 @@ inline auto operator+(const Var::Dict& lhs, const Var::Dict& rhs) {
   return out;
 }
 
-#define __MC_STACK_START(ctxtID, evb, ...) \
-  stackPush(ctxtID, evb, ##__VA_ARGS__);   \
+#define __MC_STACK_START(ctxtID, evb, ...)  \
+  stack_->push(ctxtID, evb, ##__VA_ARGS__); \
   try {
 #define __MC_STACK_END                                     \
   }                                                        \
   catch (const StackUnwin<SyntaxError>& e) {               \
+    throw e;                                               \
+  }                                                        \
+  catch (const StackUnwin<TypeError>& e) {                 \
     throw e;                                               \
   }                                                        \
   catch (const StackUnwin<EvaluationError>& e) {           \
@@ -89,13 +111,13 @@ inline auto operator+(const Var::Dict& lhs, const Var::Dict& rhs) {
 #define __MC_STACK_END_RETURN(ret) __MC_STACK_END return ret;
 
 #define __MC_BASIC_OPERATION_EVAL_START(op) try {
-#define __MC_BASIC_OPERATION_EVAL_END(op)                           \
-  }                                                                 \
-  catch (const TypeError& e) {                                      \
-    stackUnwindThrow<EvaluationError>(                              \
-        "Evaluation Error: ", SyntaxValidator{}.generateSyntax(op), \
-        " -> parameters of operation `", op.type,                   \
-        "` must be same type and NOT null: ", e.details);           \
+#define __MC_BASIC_OPERATION_EVAL_END(op)                    \
+  }                                                          \
+  catch (const TypeError& e) {                               \
+    stackUnwindThrow<EvaluationError>(                       \
+        "Evaluation Error: ", SyntaxValidator::syntaxOf(op), \
+        " -> parameters of operation `", op.type,            \
+        "` must be same type and NOT null: \n", e.details);  \
   }
 #define __MC_BASIC_OPERATION_EVAL_END_RETURN(op, defaultRet) \
   __MC_BASIC_OPERATION_EVAL_END(op) return defaultRet;
@@ -107,6 +129,9 @@ inline auto operator+(const Var::Dict& lhs, const Var::Dict& rhs) {
     stackUnwindThrow<_Exception>(__VA_ARGS__);      \
   }
 
+#define __stackUnwindThrowVariableNotFoundIf(var, varname) \
+  __stackUnwindThrowIf(EvaluationError, !var, "Property not found: ", varname);
+
 template <class _Exception, typename... _Msg>
 void SyntaxEvaluatorImpl::stackUnwindThrow(_Msg&&... msg) {
   throw_<StackUnwin<_Exception>>(generateBackTrace(strJoin(msg...)));
@@ -117,11 +142,8 @@ Var SyntaxEvaluatorImpl::evaluate(const Evaluable& e,
   SyntaxValidator validator;
   Var evaluated;
   if (validator.validate(e)) {
-    if (!stack_.empty()) {
-      stack_.clear();
-    }
     // push root context to stack as main entry
-    stack_.emplace_back(move(rootContext), Var{}, &e);
+    stack_->init(move(rootContext), &e);
     e.accept(this);
     evaluated = stackTakeReturnedVal();
   } else {
@@ -143,17 +165,12 @@ void SyntaxEvaluatorImpl::setDebugInfoCallback(DebugOutputCallback cb) {
   dbCallback_ = move(cb);
 }
 
-SyntaxEvaluatorImpl::SyntaxEvaluatorImpl(ModuleManager* moduleMgr)
-    : moduleMgr_(moduleMgr) {}
+SyntaxEvaluatorImpl::SyntaxEvaluatorImpl() : stack_(new EvaluationStack) {}
 
-SyntaxEvaluatorImpl::~SyntaxEvaluatorImpl() {
-  while (!stack_.empty()) {
-    stack_.pop_back();
-  }
-}
+SyntaxEvaluatorImpl::~SyntaxEvaluatorImpl() { delete stack_; }
 
 void SyntaxEvaluatorImpl::eval(const Constant& v) {
-  stackReturn(Var::ref(v.value));
+  stack_->return_(Var::ref(v.value));
 }
 
 void SyntaxEvaluatorImpl::eval(const EvaluableDict& v) {
@@ -162,21 +179,22 @@ void SyntaxEvaluatorImpl::eval(const EvaluableDict& v) {
     evaluated.add(String{keyword::id}, v.id);
   }
 
-  evaluateVariables(v.stackVariables);
+  evaluateLocalSymbols(v);
 
   for (auto& [key, val] : v.value) {
-    evaluated.add(key, _evalRet(val.get(), key));
+    evaluated.add(key, evalAndReturn(val.get(), strJoin(key, '.')));
   }
-  stackReturn(move(evaluated), v);
+
+  stack_->return_(move(evaluated), v);
 }
 
 void SyntaxEvaluatorImpl::eval(const EvaluableList& v) {
   auto evaluated = Var::list();
   auto itemIdx = 0;
   for (auto& val : v.value) {
-    evaluated.add(_evalRet(val.get(), strJoin(itemIdx++)));
+    evaluated.add(evalAndReturn(val.get(), strJoin(itemIdx++, '.')));
   }
-  stackReturn(move(evaluated));
+  stack_->return_(move(evaluated));
 }
 
 void SyntaxEvaluatorImpl::eval(const ArithmaticalOperator& op) {
@@ -186,7 +204,7 @@ void SyntaxEvaluatorImpl::eval(const ArithmaticalOperator& op) {
     makeSureBinaryOp(op);
   }
 
-  evaluateVariables(op.stackVariables);
+  evaluateLocalSymbols(op);
   auto e = evaluateOperator(op, [&op, this](auto&& evaluatedVals) {
     __MC_BASIC_OPERATION_EVAL_START(op)
     switch (op.type) {
@@ -217,25 +235,25 @@ void SyntaxEvaluatorImpl::eval(const ArithmaticalOperator& op) {
     __MC_BASIC_OPERATION_EVAL_END_RETURN(op, Var{})
   });
 
-  stackReturn(move(e), op);
+  stack_->return_(move(e), op);
 }
 
 void SyntaxEvaluatorImpl::eval(const ArthmSelfAssignOperator& op) {
   assert(op.params.size() == 2);
   __MC_BASIC_OPERATION_EVAL_START(op)
-  evaluateVariables(op.stackVariables);
+  evaluateLocalSymbols(op);
   auto var = op.params.front();
   auto opStr = strJoin(op.type);
   __stackUnwindThrowIf(EvaluationError, !isType<Variable>(var.get()),
                        "first argument of operator `", opStr,
                        "` must be a variable");
 
-  auto varVal = _evalRet(var.get(), opStr);
+  auto varVal = evalAndReturn(var.get(), opStr);
   __stackUnwindThrowIf(EvaluationError, varVal.isNull(), "Variable ",
                        static_cast<const Variable*>(var.get())->name,
                        " has not been initialized yet");
 
-  auto paramVal = _evalRet(op.params.back().get(), opStr);
+  auto paramVal = evalAndReturn(op.params.back().get(), opStr);
   __stackUnwindThrowIf(EvaluationError, paramVal.isNull(),
                        "Parameter to operator `", opStr, "` evaluated to null");
 
@@ -274,7 +292,7 @@ void SyntaxEvaluatorImpl::eval(const ArthmSelfAssignOperator& op) {
   }
 
   varVal.assign(move(result));
-  stackReturn(move(varVal), op);
+  stack_->return_(move(varVal), op);
   __MC_BASIC_OPERATION_EVAL_END(op)
 }
 
@@ -300,7 +318,7 @@ void SyntaxEvaluatorImpl::eval(const LogicalOperator& op) {
     }
     __MC_BASIC_OPERATION_EVAL_END_RETURN(op, Var{})
   });
-  stackReturn(move(e), op);
+  stack_->return_(move(e), op);
 }
 
 void SyntaxEvaluatorImpl::eval(const ComparisonOperator& op) {
@@ -331,17 +349,17 @@ void SyntaxEvaluatorImpl::eval(const ComparisonOperator& op) {
     }
     __MC_BASIC_OPERATION_EVAL_END_RETURN(op, false)
   });
-  stackReturn(move(e), op);
+  stack_->return_(move(e), op);
 }
 
 void SyntaxEvaluatorImpl::eval(const ListAlgorithm& op) {
   Var finalEvaled;
   Var vlist;
 
-  evaluateVariables(op.stackVariables);
+  evaluateLocalSymbols(op);
 
   if (op.list) {
-    vlist = _evalRet(op.list.get(), strJoin(op.type));
+    vlist = evalAndReturn(op.list.get(), strJoin(op.type));
   }
 
   __stackUnwindThrowIf(EvaluationError, !vlist.isList(),
@@ -351,7 +369,8 @@ void SyntaxEvaluatorImpl::eval(const ListAlgorithm& op) {
   auto& list = vlist.asList();
   int itemIdx = 0;
   auto eval_impl = [this, &itemIdx, &op](const Var& data) {
-    auto evaluated = _evalRet(op.cond.get(), strJoin(itemIdx++), data);
+    auto evaluated = evalAndReturn(op.cond.get(), strJoin(itemIdx++),
+                                   ContextArguments{data});
     __stackUnwindThrowIf(EvaluationError, !evaluated.isBool(),
                          "Invalid param type > operation: ", syntaxOf(op),
                          "` > expected: `boolean` > real_val: `",
@@ -377,29 +396,31 @@ void SyntaxEvaluatorImpl::eval(const ListAlgorithm& op) {
       break;
     case lsaot::transform:
       finalEvaled = transform(list, [this, &itemIdx, &op](const Var& data) {
-        return _evalRet(op.cond.get(), strJoin(itemIdx++), data);
+        return evalAndReturn(op.cond.get(), strJoin(itemIdx++),
+                             ContextArguments{data});
       });
       break;
     default:
       break;
   }
-  stackReturn(move(finalEvaled), op);
+  stack_->return_(move(finalEvaled), op);
 }
 
 template <class _FI>
 Var _evalFIParam(SyntaxEvaluatorImpl* evaluator,
                  const FunctionInvocationBase<_FI>& fi) {
   assert(!fi.name.empty());
-  evaluator->evaluateVariables(fi.stackVariables);
-  return evaluator->_evalRet(fi.param.get());
+  evaluator->evaluateLocalSymbols(fi);
+  return evaluator->evalAndReturn(fi.param.get());
 }
 void SyntaxEvaluatorImpl::eval(const ContextFI& fi) {
-  stackReturn(stackTopContext()->invoke(fi.name, _evalFIParam(this, fi)));
+  stack_->return_(
+      stack_->top()->context->invoke(fi.name, _evalFIParam(this, fi)));
 }
 
 void SyntaxEvaluatorImpl::eval(const EvaluatorFI& fi) {
   if (fi.name == StringView{keyword::return_ + 1}) {
-    stackReturn(_evalFIParam(this, fi));
+    stack_->return_(_evalFIParam(this, fi));
   } else {
     assert(false);
   }
@@ -407,83 +428,115 @@ void SyntaxEvaluatorImpl::eval(const EvaluatorFI& fi) {
 
 void SyntaxEvaluatorImpl::eval(const ModuleFI& fi) {
   assert(fi.module);
-  auto evaluatedParam = _evalFIParam(this, fi);
-  auto funcRet = fi.module->eval(fi.name, evaluatedParam, this);
-  stackReturn(move(funcRet), fi);
+  //  auto evaluatedParam = _evalFIParam(this, fi);
+  evaluateLocalSymbols(fi);
+  auto funcRet = fi.module->eval(fi.name, fi.param, this);
+  stack_->return_(move(funcRet), fi);
 }
 
-void SyntaxEvaluatorImpl::eval(const VariableFieldQuery& query) {
-  auto& varname = query.name;
-  auto var = _queryOrEvalVariable(varname);
+void SyntaxEvaluatorImpl::eval(const MacroFI& macro) {
+  evaluateLocalSymbols(macro);
+  auto args = evalAndReturn(macro.param.get());
+  __stackUnwindThrowIf(EvaluationError, !args.isList(),
+                       "Not evaluated to list of arguments: ",
+                       SyntaxValidator::syntaxOf(macro.param));
+  stack_->top()->context->args(args.asList());
+  stack_->return_(evalAndReturn(macro.macro.get()));
+}
+
+void SyntaxEvaluatorImpl::eval(const ObjectPropertyQuery& query) {
+  auto object = evalAndReturn(query.object.get());
   do {
-    if (var->isNull()) {
-      stackReturn(Var{});
+    if (object.isNull()) {
+      stack_->return_(Var{});
       break;
     }
-
-    auto dest = *var;
-    for (auto& evbField : query.field_path) {
-      auto field = _evalRet(evbField.get());
+    for (auto& evbField : query.propertyPath) {
+      auto field = evalAndReturn(evbField.get());
       if (field.isString()) {
-        dest = dest.getAt(field.asString());
+        object = object.getPath(field.asString());
       } else if (field.isInt()) {
-        dest = dest.getAt(field.getValue<size_t>());
+        object = object.getAt(field.getValue<size_t>());
       } else {
         stackUnwindThrow<EvaluationError>("Cannot evaluated to a valid path: ",
                                           field.dump());
       }
-      if (dest.isNull()) {
+      if (object.isNull()) {
         break;
       }
     }
-    stackReturn(move(dest));
+    stack_->return_(move(object));
   } while (false);
 }
 
 void SyntaxEvaluatorImpl::eval(const Variable& prop) {
-  stackReturn(*_queryOrEvalVariable(prop.name));
+  stack_->return_(*_queryOrEvalVariable(prop.name));
+}
+
+void SyntaxEvaluatorImpl::eval(const ContextArgument& arg) {
+  stack_->return_(stack_->top()->context->arg(arg.index));
+}
+
+void SyntaxEvaluatorImpl::eval(const ContextArgumentsInfo& arginf) {
+  switch (arginf.type) {
+    case ContextArgumentsInfo::Type::ArgCount:
+      stack_->return_(stack_->top()->context->args().size());
+      break;
+    case ContextArgumentsInfo::Type::Args:
+      stack_->return_(stack_->top()->context->args());
+      break;
+  }
 }
 
 Var* SyntaxEvaluatorImpl::_queryOrEvalVariable(const String& variableName) {
-  Var* val = nullptr;
-  try {
-    val = stackTopContext()->variable(variableName);
-  } catch (const EvaluationError&) {
+  auto val = stack_->top()->context->lookupVariable(variableName);
+  if (!val) {
     // loop through stack to find the not evaluated property
-    for (auto it = std::rbegin(stack_); it != std::rend(stack_); ++it) {
-      if (!it->variables) {
+    auto currentFrame = stack_->top();
+    do {
+      assert(currentFrame->evb->useStack());
+      auto currentEvb =
+          static_cast<const UseStackEvaluable*>(currentFrame->evb);
+      if (!currentEvb->localVariables) {
+        currentFrame = currentFrame->parent;
         continue;
       }
-      if (auto itProp = it->variables->find(variableName);
-          itProp != std::end(*it->variables)) {
-        auto& varInfo = *itProp;
+
+      if (auto itProp = currentEvb->localVariables->find(variableName);
+          itProp != std::end(*currentEvb->localVariables)) {
+        auto& varInfo = itProp->second;
+        auto varStatus = currentFrame->variableStatus(variableName);
+        // if variable was not found on top context, then it should not be
+        // evaluated yet
+        assert(varStatus != VariableStatus::Evaluated);
         __stackUnwindThrowIf(
-            EvaluationError, varInfo.state == VariableInfo::Evaluating,
+            EvaluationError, varStatus == VariableStatus::Evaluating,
             "Cyclic reference detected on variable: $", variableName);
-        val = evaluateSingleVar(it->context, variableName, varInfo);
+        val = evaluateSingleVar(currentFrame, variableName, varInfo);
         break;
       }
-    }
-    __jas_throw_if(EvaluationError, !val, "Unknown reference to variable `$",
-                   variableName, "`");
+      currentFrame = currentFrame->parent;
+    } while (currentFrame);
   }
+
+  __jas_throw_if(EvaluationError, !val, "Unknown reference to variable `$",
+                 variableName, "`");
   return val;
 }
 
 void SyntaxEvaluatorImpl::_evalOnStack(const Evaluable* e, String ctxtID,
-                                       Var ctxtData) {
+                                       ContextArguments ctxtInput) {
   assert(e);
   __MC_STACK_START(
-      strJoin(move(ctxtID),
-              static_cast<const UseStackEvaluable*>(e)->typeID()),
-      e, std::move(ctxtData));
+      strJoin(move(ctxtID), static_cast<const UseStackEvaluable*>(e)->typeID()),
+      e, std::move(ctxtInput));
   e->accept(this);
 
   __MC_STACK_END
 }
 
-Var SyntaxEvaluatorImpl::_evalRet(const Evaluable* e, String ctxtID,
-                                  Var ctxtData) {
+Var SyntaxEvaluatorImpl::evalAndReturn(const Evaluable* e, String ctxtID,
+                                       ContextArguments ctxtData) {
   Var evaluated;
   if (e) {
     if (e->useStack()) {
@@ -493,55 +546,21 @@ Var SyntaxEvaluatorImpl::_evalRet(const Evaluable* e, String ctxtID,
       e->accept(this);
       std::swap(evaluated, stackReturnedVal());
       if (!isType<Constant>(e)) {
-        stackDebugReturnVal(evaluated, e);
+        debugStackReturnedValue(evaluated, e);
       }
     }
   }
   return evaluated;
 }
 
-String SyntaxEvaluatorImpl::stackDump() const {
-  OStringStream oss;
-  oss << std::boolalpha;
-  int i = static_cast<int>(stack_.size());
-  for (auto iframe = std::rbegin(stack_); iframe != std::rend(stack_);
-       ++iframe) {
-    oss << "#" << std::left << std::setw(3) << i-- << ": " << std::setw(60)
-        << (iframe->evb ? syntaxOf(*iframe->evb)
-                        : JASSTR("----------##--------"));
-    if (auto ctxinfo = iframe->context->debugInfo(); !ctxinfo.empty()) {
-      oss << " --> [ctxt]: " << iframe->context->debugInfo();
-    }
-    oss << "\n";
-  }
-  return oss.str();
-}
-
-void SyntaxEvaluatorImpl::stackPush(String ctxtID, const Evaluable* evb,
-                                    Var contextData) {
-  stack_.push_back(EvaluationFrame{
-      stackTopContext()->subContext(ctxtID, move(contextData)), Var{}, evb});
-}
-
-void SyntaxEvaluatorImpl::stackReturn(Var val) {
-  stackTopFrame().returnedValue = move(val);
-}
-
-void SyntaxEvaluatorImpl::stackReturn(Var val, const UseStackEvaluable& ev) {
-  if (!ev.id.empty()) {
-    stackTopContext()->setVariable(ev.id, val);
-  }
-  stackReturn(move(val));
-}
-
-void SyntaxEvaluatorImpl::stackDebugReturnVal(const Var& e,
-                                              const Evaluable* evb) {
+void SyntaxEvaluatorImpl::debugStackReturnedValue(const Var& e,
+                                                  const Evaluable* evb) {
   if (dbCallback_ && evb) {
     auto addUseCount = [&](auto&& syntax) {
-#ifdef __JAS_DEEP_DEBUG
+#ifndef __JAS_DEEP_DEBUG
       if (isType<Variable>(evb)) {
-        return strJoin(syntax, std::hex, "  (", e.address(),
-                       " - ref:", e.useCount(), ")");
+        return strJoin(syntax, std::hex, "  (", e.address(), " - ref:",
+                       e.isRef() ? e.asRef()->useCount() : e.useCount(), ")");
       } else {
         return strJoin(syntax, std::hex, "  (", e.address(), ")");
       }
@@ -563,70 +582,59 @@ void SyntaxEvaluatorImpl::stackDebugReturnVal(const Var& e,
 }
 
 Var& SyntaxEvaluatorImpl::stackReturnedVal() {
-  return stackTopFrame().returnedValue;
+  return stack_->top()->returnedValue;
 }
 
 Var SyntaxEvaluatorImpl::stackTakeReturnedVal() {
   Var e = move(stackReturnedVal());
-  stackDebugReturnVal(e, stackTopFrame().evb);
-  stackPop();
+  debugStackReturnedValue(e, stack_->top()->evb);
+  stack_->pop();
   return e;
 }
 
-void SyntaxEvaluatorImpl::stackPop() { stack_.pop_back(); }
-
-SyntaxEvaluatorImpl::EvaluationFrame& SyntaxEvaluatorImpl::stackTopFrame() {
-  return stack_.back();
-}
-
-const EvalContextPtr& SyntaxEvaluatorImpl::stackTopContext() {
-  return stack_.back().context;
-}
-
-const EvalContextPtr& SyntaxEvaluatorImpl::stackRootContext() {
-  return stack_.front().context;
-}
-
-Var* SyntaxEvaluatorImpl::evaluateSingleVar(const EvalContextPtr& ctxt,
+Var* SyntaxEvaluatorImpl::evaluateSingleVar(const EvaluationFramePtr& frame,
                                             const String& varname,
-                                            const VariableInfo& vi) {
-  vi.state = VariableInfo::Evaluating;
-  auto val = _evalRet(vi.variable.get(), vi.name);
-  vi.state = VariableInfo::Evaluated;
-  if (vi.type == VariableInfo::Declaration) {
-    return ctxt->setVariable(varname, move(val));
+                                            const VariableEvalInfo& vi) {
+  Var* ret = nullptr;
+  auto savedFrame = stack_->top();
+  stack_->top(frame);
+  frame->startEvaluatingVar(varname);
+  auto val = evalAndReturn(vi.value.get(), varname);
+  if (vi.type == VariableEvalInfo::Declaration) {
+    ret = frame->context->putVariable(varname, move(val));
   } else {
-    auto var = ctxt->variable(varname);
-    var->assign(move(val));
-    return var;
+    ret = frame->context->lookupVariable(varname);
+    __stackUnwindThrowVariableNotFoundIf(!ret, varname);
+    ret->assign(move(val));
   }
+  frame->finishEvaluatingVar(varname);
+  stack_->top(move(savedFrame));
+  return ret;
 }
 
-void SyntaxEvaluatorImpl::evaluateVariables(
-    const StackVariablesPtr& variables) {
-  if (variables) {
-    auto ctxt = stackTopContext();
-    // some variables might refer to variable in same stack frame
-    stackTopFrame().variables = variables;
-    for (auto& var : *(stackTopFrame().variables)) {
-      if (var.state == VariableInfo::Evaluated) {
-        continue;
+void SyntaxEvaluatorImpl::evaluateLocalSymbols(const UseStackEvaluable& evb) {
+  if (evb.localVariables) {
+    auto currentFrame = stack_->top();
+    if (!currentFrame->variableStatusMapPtr) {
+      currentFrame->variableStatusMapPtr = make_shared<VariableStatusMap>();
+    }
+    for (auto& [varname, var] : *(evb.localVariables)) {
+      auto varStatus = currentFrame->variableStatus(varname);
+      assert(varStatus != VariableStatus::Evaluating);
+      if (varStatus != VariableStatus::Evaluated) {
+        evaluateSingleVar(currentFrame, varname, var);
       }
-      evaluateSingleVar(ctxt, var.name, var);
     }
   }
 }
 
 String SyntaxEvaluatorImpl::generateBackTrace(const String& msg) const {
-  OStringStream oss;
-  oss << "Msg: " << msg << "\n"
-      << "EVStack trace: \n"
-      << stackDump();
-  return oss.str();
+  return strJoin("Msg: ", msg, "\n", "EVStack trace: \n", stack_->dump(),
+                 "#__main__\n");
 }
 
 String SyntaxEvaluatorImpl::syntaxOf(const Evaluable& e) {
-  return SyntaxValidator{}.generateSyntax(e);
+  return SyntaxValidator::syntaxOf(e);
 }
 
 template <class _optype_t, _optype_t _optype_val,
@@ -635,12 +643,12 @@ template <class _optype_t, _optype_t _optype_val,
 Var SyntaxEvaluatorImpl::applyOp(const _Params& frame) {
   Var firstEvaluated = frame.front();
   return firstEvaluated.visitValue(
-      [&frame, this](auto&& val) {
+      [&](auto&& val) {
         using ValType = std::decay_t<decltype(val)>;
         auto _throwNotApplicableErr = [&] {
-          stackUnwindThrow<TypeError>(
-              "Operator ", _optype_val,
-              " is not applicable on type: ", typeNameOf(val));
+          throw_<TypeError>("operator ", _optype_val,
+                            " is not applicable on type: ", typeNameOf(val),
+                            " with value: ", firstEvaluated);
         };
         if constexpr (op_traits::operationSupported<ValType>(_optype_val)) {
           return _applier_impl<ValType, _std_op<ValType>, _Params>::apply(
@@ -656,7 +664,7 @@ Var SyntaxEvaluatorImpl::applyOp(const _Params& frame) {
 template <class _Operation, class _Callable>
 Var SyntaxEvaluatorImpl::evaluateOperator(const _Operation& op,
                                           _Callable&& eval_func) {
-  evaluateVariables(op.stackVariables);
+  evaluateLocalSymbols(op);
   // evaluate all params
   EvaluatedOnReadValues inlevals;
   for (auto& p : op.params) {

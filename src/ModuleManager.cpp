@@ -4,18 +4,43 @@ namespace jas {
 
 using std::move;
 
+static inline auto findModule(const ModuleManager::ModuleMap &modules,
+                              const String &moduleName,
+                              FunctionModulePtr const &mdl) {
+  auto [beg, ed] = modules.equal_range(moduleName);
+  while (beg != ed) {
+    if (beg->second == mdl) {
+      return beg;
+    }
+    ++beg;
+  }
+
+  return modules.end();
+}
+
 bool ModuleManager::addModule(const String &moduleName,
                               FunctionModulePtr mdl) noexcept {
-  auto &tobePut = modules_[moduleName];
-  if (!tobePut) {
-    tobePut = move(mdl);
-    return true;
+  if (findModule(modules(), moduleName, mdl) == std::end(modules())) {
+    modules_.emplace(moduleName, std::move(mdl));
   }
-  return false;
+  return true;
 }
 
 bool ModuleManager::removeModule(const String &moduleName) noexcept {
   return modules_.erase(moduleName) != 0;
+}
+
+bool ModuleManager::removeModule(const String &moduleName,
+                                 const FunctionModulePtr &mdl) noexcept {
+  auto [beg, end] = modules_.equal_range(moduleName);
+  while (beg != end) {
+    if (beg->second == mdl) {
+      modules_.erase(beg);
+      return true;
+    }
+    ++beg;
+  }
+  return false;
 }
 
 bool ModuleManager::hasModule(const StringView &moduleName) const noexcept {

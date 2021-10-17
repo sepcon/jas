@@ -104,7 +104,12 @@ JAS_NAMESPACE_END(keyword)
 
 JAS_NAMESPACE_BEGIN(prefix)
   JAS_KEYWORD_PREFIX_DECL_1_1(variable, '$')
+  JAS_KEYWORD_PREFIX_DECL_1_1(varupdate, '+')
   JAS_KEYWORD_PREFIX_DECL_1_1(specifier, '@')
+  JAS_KEYWORD_PREFIX_DECL_1_1(macro, '!')
+  JAS_KEYWORD_PREFIX_DECL_1_1(argc, '#')
+  JAS_KEYWORD_PREFIX_DECL_1_1(args, '*')
+  JAS_KEYWORD_PREFIX_DECL_1_1(arg, '_')
 JAS_NAMESPACE_END(prefix)
 // clang-format on
 

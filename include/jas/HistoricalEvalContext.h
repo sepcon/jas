@@ -13,14 +13,16 @@ class HistoricalEvalContext : public BasicEvalContext {
  public:
   using EvaluatedVariables = Var;
   using EvaluatedVariablesPtr = std::shared_ptr<EvaluatedVariables>;
-  enum SnapshotIdx {
-    SnapshotIdxOld = 0,
-    SnapshotIdxNew = 1,
+  enum SnapshotIdx : size_t {
+    SnapshotIdxNew = 0,
+    SnapshotIdxOld = 1,
     SnapshotIdxMax,
   };
 
   static const constexpr auto TobeStoredVariablePrefix = JASSTR('.');
 
+  HistoricalEvalContext(HistoricalEvalContext* p, ContextArguments input,
+                        String id);
   HistoricalEvalContext(HistoricalEvalContext* p = nullptr,
                         Var currentSnapshot = {}, Var lastSnapshot = {},
                         String id = {});
@@ -40,13 +42,13 @@ class HistoricalEvalContext : public BasicEvalContext {
   Var invoke(const String& funcName, const Var& param) override;
 
  private:
-  Var snapshots_[SnapshotIdxMax];
   EvaluatedVariablesPtr lastEvalResult_;
 
   Var snapshotValue(const String& path, const String& snapshot) const;
   Var snapshotValue(const String& path,
                     const SnapshotIdx snidx = SnapshotIdxNew) const;
-  EvalContextPtr subContext(const String& ctxtID, const Var& input) override;
+  EvalContextPtr subContext(const String& ctxtID,
+                            ContextArguments input) override;
   bool hasData() const;
   HistoricalEvalContext* parent() const;
   String contextPath() const;

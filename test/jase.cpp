@@ -15,7 +15,6 @@ using namespace std;
 using namespace jas;
 using namespace chrono_literals;
 namespace fs = std::filesystem;
-using chrono::system_clock;
 
 static const CharType* JASE_TITLE = JASSTR("JAS - Json evAluation Syntax");
 static JASFacade& jasFacade() {

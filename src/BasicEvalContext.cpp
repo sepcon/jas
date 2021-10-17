@@ -11,8 +11,9 @@ using std::move;
 
 static bool _isGloblProperty(const String &name);
 
-BasicEvalContext::BasicEvalContext(BasicEvalContext *parent, String id)
-    : parent_(parent), id_(move(id)) {}
+BasicEvalContext::BasicEvalContext(BasicEvalContext *parent, String id,
+                                   ContextArguments input)
+    : parent_(parent), id_(move(id)), args_(move(input)) {}
 
 std::vector<String> BasicEvalContext::supportedFunctions() const { return {}; }
 
@@ -34,7 +35,7 @@ Var BasicEvalContext::invoke(const String &funcName, const Var &param) {
   return {};
 }
 
-Var *BasicEvalContext::variable(const String &name) {
+Var *BasicEvalContext::lookupVariable(const String &name) {
   if (_isGloblProperty(name)) {
     auto root = rootContext();
     if (root == this) {
@@ -43,19 +44,18 @@ Var *BasicEvalContext::variable(const String &name) {
         return &it->second;
       }
     }
-    return root->variable(name.substr(1));
+    return root->lookupVariable(name.substr(1));
   }
   auto it = variables_.find(name);
   if (it != variables_.end()) {
     return &it->second;
   } else if (parent_) {
-    return parent_->variable(name);
+    return parent_->lookupVariable(name);
   }
-  __jas_throw(EvaluationError, "Property not found: ", name);
   return nullptr;
 }
 
-Var *BasicEvalContext::setVariable(const String &name, Var val) {
+Var *BasicEvalContext::putVariable(const String &name, Var val) {
   auto makeVar = [&val] {
     if (val.isRef()) {
       return Var::ref(*val.asRef());
@@ -68,37 +68,19 @@ Var *BasicEvalContext::setVariable(const String &name, Var val) {
     if (auto root = rootContext(); root == this) {
       return &(variables_[name.substr(1)] = makeVar());
     } else {
-      return root->setVariable(name.substr(1), makeVar());
+      return root->putVariable(name.substr(1), makeVar());
     }
   } else {
     return &(variables_[name] = makeVar());
   }
 }
 
-EvalContextPtr BasicEvalContext::subContext(const String &ctxtID, const Var &) {
-  return make_shared<BasicEvalContext>(this, ctxtID);
+EvalContextPtr BasicEvalContext::subContext(const String &ctxtID,
+                                            ContextArguments args) {
+  return make_shared<BasicEvalContext>(this, ctxtID, move(args));
 }
 
-Var BasicEvalContext::findProperty(BasicEvalContext *ctxt, const String &name) {
-  if (auto it = ctxt->variables_.find(name); it != std::end(ctxt->variables_)) {
-    return it->second;
-  } else {
-    return {};
-  }
-}
-
-String BasicEvalContext::debugInfo() const {
-  auto inf = id_;
-  OStringStream oss;
-  oss << id_ << "({";
-  for (auto &[prop, val] : variables_) {
-    oss << "{" << prop << ", ";
-    oss << val.dump();
-    oss << " }, ";
-  }
-  oss << "})";
-  return oss.str();
-}
+String BasicEvalContext::debugInfo() const { return id_; }
 
 const BasicEvalContext *BasicEvalContext::rootContext() const {
   auto root = this;
@@ -118,6 +100,30 @@ BasicEvalContext *BasicEvalContext::rootContext() {
 
 static bool _isGloblProperty(const String &name) {
   return name[0] == prefix::variable;
+}
+
+Var BasicEvalContext::arg(uint8_t pos) const noexcept {
+  if (!args_.empty()) {
+    if (pos > 0 && pos <= args_.size()) {
+      return args_[pos - 1];
+    } else {
+      return {};
+    }
+  } else if (parent_) {
+    return parent_->arg(pos);
+  } else {
+    return {};
+  }
+}
+
+void BasicEvalContext::args(ContextArguments args) { args_ = move(args); }
+
+const ContextArguments &BasicEvalContext::args() const noexcept {
+  if (args_.empty() && parent_) {
+    return parent_->args();
+  } else {
+    return args_;
+  }
 }
 
 }  // namespace jas

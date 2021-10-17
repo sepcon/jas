@@ -8,24 +8,32 @@ namespace jas {
 
 class BasicEvalContext : public EvalContextIF {
  public:
-  using PropertyMap = std::map<String, Var>;
+  using VariableMap = std::map<String, Var>;
 
-  BasicEvalContext(BasicEvalContext* parent = nullptr, String id = {});
-  std::vector<String> supportedFunctions() const override;
-  bool functionSupported(const StringView& functionName) const override;
-  Var invoke(const String& name, const Var& param) override;
-  Var* variable(const String& refid) override;
-  Var* setVariable(const String& name, Var val) override;
-  EvalContextPtr subContext(const String& ctxtID, const Var& input) override;
-  Var findProperty(BasicEvalContext* ctxt, const String& name);
-  String debugInfo() const override;
-  const BasicEvalContext* rootContext() const;
-  BasicEvalContext* rootContext();
-
+  BasicEvalContext(BasicEvalContext *parent = nullptr, String id = {},
+                   ContextArguments input = {});
+  // EvalContextIF interface
  public:
-  BasicEvalContext* parent_ = nullptr;
+  std::vector<String> supportedFunctions() const override;
+  bool functionSupported(const StringView &functionName) const override;
+  Var invoke(const String &name, const Var &param) override;
+  Var *lookupVariable(const String &name) override;
+  Var *putVariable(const String &name, Var val) override;
+  EvalContextPtr subContext(const String &ctxtID,
+                            ContextArguments input) override;
+  Var arg(uint8_t pos) const noexcept override;
+  void args(ContextArguments args) override;
+  const ContextArguments &args() const noexcept override;
+  String debugInfo() const override;
+
+  const BasicEvalContext *rootContext() const;
+  BasicEvalContext *rootContext();
+
+ protected:
+  BasicEvalContext *parent_ = nullptr;
   String id_;
-  PropertyMap variables_;
+  VariableMap variables_;
+  ContextArguments args_;
 };
 
 }  // namespace jas

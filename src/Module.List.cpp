@@ -1,5 +1,5 @@
 #include "VarManipModuleShared.h"
-#include "jas/FunctionModuleBaseT.h"
+#include "jas/SyntaxEvaluatorImpl.h"
 
 namespace jas {
 namespace mdl {
@@ -94,7 +94,7 @@ __list_func(insert, params) {
 
   internalList.insert(internalList.begin() + insertPos.getValue<size_t>(),
                       params[2]);
-  return true;
+  return internalList;
 }
 
 __list_func(clear, varList) {

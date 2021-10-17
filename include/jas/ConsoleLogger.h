@@ -5,6 +5,7 @@
 #include <iostream>
 
 #include "Json.h"
+#include "String.h"
 
 namespace jas {
 

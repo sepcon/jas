@@ -11,51 +11,22 @@ namespace jas {
 using DebugOutputCallback = std::function<void(const String&)>;
 class ModuleManager;
 class Evaluable;
-class SyntaxEvaluatorImpl : public EvaluatorBase {
+class EvaluationStack;
+class EvaluationFrame;
+using EvaluationFramePtr = std::shared_ptr<EvaluationFrame>;
+
+class SyntaxEvaluatorImpl : public EvaluatorIF {
  public:
   Var evaluate(const Evaluable& e, EvalContextPtr rootContext = nullptr);
   Var evaluate(const EvaluablePtr& e, EvalContextPtr rootContext = nullptr);
 
   void setDebugInfoCallback(DebugOutputCallback);
 
-  SyntaxEvaluatorImpl(ModuleManager* moduleMgr);
+  SyntaxEvaluatorImpl();
   ~SyntaxEvaluatorImpl();
 
-  struct EvaluationFrame;
-  struct EvaluatedOnReadValue;
-  using EvaluationStack = std::list<EvaluationFrame>;
-  using EvaluatedOnReadValues = std::vector<EvaluatedOnReadValue>;
-
-  struct EvaluationFrame {
-    EvaluationFrame(EvalContextPtr _context = {}, Var _returnedValue = {},
-                    const Evaluable* _evb = nullptr)
-        : context(_context), returnedValue(_returnedValue), evb(_evb) {}
-
-    EvalContextPtr context;
-    Var returnedValue;
-    const Evaluable* evb;
-    StackVariablesPtr variables;
-  };
-
-  struct EvaluatedOnReadValue {
-    EvaluatedOnReadValue(SyntaxEvaluatorImpl* delegate, const Evaluable& e)
-        : delegate_(delegate), e_(e) {}
-
-    operator Var() const {
-      if (ed_.isNull()) {
-        ed_ = delegate_->_evalRet(&e_);
-      }
-      return ed_;
-    }
-
-    SyntaxEvaluatorImpl* delegate_;
-    const Evaluable& e_;
-    mutable Var ed_;
-  };
-
-  EvaluationStack stack_;
+  EvaluationStack* stack_ = nullptr;
   DebugOutputCallback dbCallback_;
-  ModuleManager* moduleMgr_ = nullptr;
   int evalCount_ = 0;
   //-----------------------------------------------
   void eval(const Constant& v) override;
@@ -69,29 +40,26 @@ class SyntaxEvaluatorImpl : public EvaluatorBase {
   void eval(const ContextFI& func) override;
   void eval(const EvaluatorFI& func) override;
   void eval(const ModuleFI& func) override;
-  void eval(const VariableFieldQuery& query) override;
+  void eval(const MacroFI& macro) override;
+  void eval(const ObjectPropertyQuery& query) override;
   void eval(const Variable& rv) override;
+  void eval(const ContextArgument& arg) override;
+  void eval(const ContextArgumentsInfo& arginf) override;
+
   Var* _queryOrEvalVariable(const String& variableName);
-  void _evalOnStack(const Evaluable* e, String ctxtID = {}, Var ctxtData = {});
-  Var _evalRet(const Evaluable* e, String ctxtID = {}, Var ctxtData = {});
+  void _evalOnStack(const Evaluable* e, String ctxtID = {},
+                    ContextArguments ctxtInput = {});
+  Var evalAndReturn(const Evaluable* e, String ctxtID = {},
+                    ContextArguments ctxtData = {});
   template <class _Exception, typename... _Msg>
   void stackUnwindThrow(_Msg&&...);
 
-  /// Stack functions
-  String stackDump() const;
-  void stackPush(String ctxtID, const Evaluable* evb, Var contextData = {});
-  void stackPop();
-  void stackReturn(Var val);
-  void stackReturn(Var val, const UseStackEvaluable& ev);
-  inline void stackDebugReturnVal(const Var& e, const Evaluable* evb);
+  inline void debugStackReturnedValue(const Var& e, const Evaluable* evb);
   Var& stackReturnedVal();
   Var stackTakeReturnedVal();
-  EvaluationFrame& stackTopFrame();
-  const EvalContextPtr& stackTopContext();
-  const EvalContextPtr& stackRootContext();
-  Var* evaluateSingleVar(const EvalContextPtr& ctxt, const String& varname,
-                         const VariableInfo& vi);
-  void evaluateVariables(const StackVariablesPtr& params);
+  Var* evaluateSingleVar(const EvaluationFramePtr& frame, const String& varname,
+                         const VariableEvalInfo& vi);
+  void evaluateLocalSymbols(const UseStackEvaluable& evb);
   String generateBackTrace(const String& msg) const;
 
   /// Evaluations:

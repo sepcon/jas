@@ -1,9 +1,9 @@
 #include "VarManipModuleShared.h"
+#include "jas/SyntaxEvaluatorImpl.h"
 
 namespace jas {
 namespace mdl {
 namespace dict {
-
 #define __dict_func(name, params) __module_func(dict, name, params)
 
 #define __dict_verify_no_args(params)               \

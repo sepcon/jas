@@ -11,7 +11,7 @@
 { "$mylist": [1,2,3], "@list.extend":[ "$mylist", [4,5], [6,7] ]}
 [1,2,3,4,5,6,7]
 { "$mylist": [1,2,3], "@list.insert":[ "$mylist", 1, 6 ]}
-true
+[1,6,2,3]
 { "$mylist": [1,2,3], "$good:@list.insert":[ "$mylist", 3, 6 ], "@return":"$mylist"}
 [1,2,3,6]
 { "$mylist": [1,2,3], "$good:@list.insert":[ "$mylist", 7, 6 ], "@return":"$mylist"}

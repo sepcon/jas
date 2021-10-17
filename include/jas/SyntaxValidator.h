@@ -17,6 +17,8 @@ class SyntaxValidator {
   String generateSyntax(const EvaluablePtr& e);
   String getReport();
   bool hasError() const;
+  static String syntaxOf(const Evaluable& e);
+  static String syntaxOf(const EvaluablePtr& e);
 
  private:
   class SyntaxValidatorImpl* impl_ = nullptr;

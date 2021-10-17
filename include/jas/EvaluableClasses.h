@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "Evaluable.h"
+#include "EvaluableClassesFwd.h"
 #include "Exception.h"
 #include "FunctionModule.h"
 #include "Json.h"
@@ -13,64 +14,20 @@
 
 namespace jas {
 
-class Evaluable;
-struct Constant;
-struct EvaluableDict;
-struct EvaluableList;
-struct ArithmaticalOperator;
-struct ArthmSelfAssignOperator;
-struct LogicalOperator;
-struct ComparisonOperator;
-struct ListAlgorithm;
-struct ModuleFI;
-struct ContextFI;
-struct EvaluatorFI;
-struct VariableFieldQuery;
-struct Variable;
+struct VariableEvalInfo;
 using Evaluables = std::vector<EvaluablePtr>;
-struct VariableInfo;
-using StackVariables = std::set<VariableInfo, std::less<>>;
-using StackVariablesPtr = std::shared_ptr<StackVariables>;
+using LocalVariables = std::map<String, VariableEvalInfo, std::less<>>;
+using LocalVariablesPtr = std::shared_ptr<LocalVariables>;
+using LocalMacrosMap = std::map<String, MacroPtr, std::less<>>;
+using LocalMacrosMapPtr = std::shared_ptr<LocalMacrosMap>;
 
-struct VariableInfo {
-  enum State { NotEvaluated, Evaluating, Evaluated };
+struct VariableEvalInfo {
   enum Type { Declaration, Update };
-  VariableInfo(String n, EvaluablePtr v, Type tp = Declaration)
-      : name(std::move(n)), variable(std::move(v)), type(tp) {}
+  VariableEvalInfo(EvaluablePtr v, Type tp = Declaration)
+      : value(std::move(v)), type(tp) {}
 
-  String name;
-  EvaluablePtr variable;
+  EvaluablePtr value;
   Type type;
-  mutable State state = NotEvaluated;
-};
-
-inline bool operator<(const VariableInfo& first, const VariableInfo& second) {
-  return (first.name < second.name) ||
-         ((first.name == second.name) && (first.type < second.type));
-}
-inline bool operator<(const VariableInfo& vi, const String& name) {
-  return vi.name < name;
-}
-inline bool operator<(const String& name, const VariableInfo& vi) {
-  return name < vi.name;
-}
-
-class EvaluatorBase {
- public:
-  virtual ~EvaluatorBase() = default;
-  virtual void eval(const Constant&) = 0;
-  virtual void eval(const EvaluableDict&) = 0;
-  virtual void eval(const EvaluableList&) = 0;
-  virtual void eval(const ArithmaticalOperator&) = 0;
-  virtual void eval(const ArthmSelfAssignOperator&) = 0;
-  virtual void eval(const LogicalOperator&) = 0;
-  virtual void eval(const ComparisonOperator&) = 0;
-  virtual void eval(const ListAlgorithm&) = 0;
-  virtual void eval(const ModuleFI&) = 0;
-  virtual void eval(const ContextFI&) = 0;
-  virtual void eval(const EvaluatorFI&) = 0;
-  virtual void eval(const VariableFieldQuery&) = 0;
-  virtual void eval(const Variable&) = 0;
 };
 
 template <class _Evaluable>
@@ -88,56 +45,86 @@ bool isType(const EvaluablePtr& evb) {
 }
 
 struct UseStackEvaluable : public Evaluable {
-  UseStackEvaluable(StackVariablesPtr variables, String id = {})
-      : id(std::move(id)), stackVariables{std::move(variables)} {}
+  UseStackEvaluable(Evaluable* parent, LocalVariablesPtr variables,
+                    String id = {})
+      : Evaluable(parent),
+        id(std::move(id)),
+        localVariables{std::move(variables)} {}
   bool useStack() const override { return true; }
-  virtual const char* typeID() const = 0;
+  MacroPtr resolveMacro(const StringView& mcname) override {
+    if (localMacros) {
+      auto itMc = localMacros->find(mcname);
+      if (itMc != std::end(*localMacros)) {
+        return itMc->second;
+      }
+    }
+    return Evaluable::resolveMacro(mcname);
+  }
+
+  bool hasLocalMacros() const { return localMacros && !localMacros->empty(); }
+
+  bool hasLocalVariables() const {
+    return localVariables && !localVariables->empty();
+  }
+  bool hasLocalSymbols() const {
+    return hasLocalMacros() || hasLocalVariables();
+  }
+
+  virtual String typeID() const = 0;
 
   String id;
-  StackVariablesPtr stackVariables;
+  LocalVariablesPtr localVariables;
+  LocalMacrosMapPtr localMacros;
 };
 
 template <class _SpecEvaluable>
 struct UseStackEvaluableT : public UseStackEvaluable {
-  void accept(EvaluatorBase* e) const override {
+  void accept(EvaluatorIF* e) const override {
     e->eval(static_cast<const _SpecEvaluable&>(*this));
   }
-
-  const char* typeID() const override { return typeid(_SpecEvaluable).name(); }
-
   using __Base = UseStackEvaluable;
   using __Base::__Base;
 };
 
 struct StacklessEvaluable : public Evaluable {
+  using Evaluable::Evaluable;
   bool useStack() const override { return false; }
 };
 
 template <class _SpecEvaluable>
 struct StacklessEvaluableT : public StacklessEvaluable {
   using StacklessEvaluable::StacklessEvaluable;
-  void accept(EvaluatorBase* e) const override {
+  void accept(EvaluatorIF* e) const override {
     e->eval(static_cast<const _SpecEvaluable&>(*this));
   }
 };
 
 struct Constant : public StacklessEvaluableT<Constant> {
+  using _Base = StacklessEvaluableT<Constant>;
   template <class T>
-  Constant(T&& v) : value(std::forward<T>(v)) {}
+  Constant(Evaluable* parent, T&& v)
+      : _Base(parent), value(std::forward<T>(v)) {}
   Var value;
 };
 
 struct EvaluableDict : public UseStackEvaluableT<EvaluableDict> {
   using __Base = UseStackEvaluableT<EvaluableDict>;
   using value_type = std::map<String, EvaluablePtr>;
-  EvaluableDict(value_type v = {}, StackVariablesPtr cp = {})
-      : __Base(std::move(cp)), value{std::move(v)} {}
+  EvaluableDict(Evaluable* parent, value_type v = {}, LocalVariablesPtr cp = {})
+      : __Base(parent, std::move(cp)), value{std::move(v)} {}
+
   value_type value;
+
+  // UseStackEvaluable interface
+ public:
+  String typeID() const override { return "dict"; }
 };
 
 struct EvaluableList : public StacklessEvaluableT<EvaluableList> {
   using value_type = std::vector<EvaluablePtr>;
-  EvaluableList(value_type v = {}) : value{std::move(v)} {}
+  using _Base = StacklessEvaluableT<EvaluableList>;
+  EvaluableList(Evaluable* parent, value_type v = {})
+      : _Base(parent), value{std::move(v)} {}
   value_type value;
 };
 
@@ -147,14 +134,19 @@ struct _OperatorBase : public UseStackEvaluableT<_SubType> {
   using ParamPtr = EvaluablePtr;
   using Params = Evaluables;
   using OperatorType = _Type;
-  _OperatorBase(String id, OperatorType t, Params p, StackVariablesPtr cp)
-      : UseStackEvaluableT<_SubType>(std::move(cp), std::move(id)),
+  _OperatorBase(Evaluable* parent, String id, OperatorType t, Params p,
+                LocalVariablesPtr cp)
+      : UseStackEvaluableT<_SubType>(parent, std::move(cp), std::move(id)),
         type{t},
         params{std::move(p)} {}
   void add_param(ParamPtr p) { params.push_back(std::move(p)); }
 
   OperatorType type;
   Params params;
+
+  // UseStackEvaluable interface
+ public:
+  String typeID() const override { return strJoin(type); }
 };
 
 enum class aot : int32_t {
@@ -372,9 +364,9 @@ inline OStream& operator<<(OStream& os, lsaot o) {
 }
 
 struct ListAlgorithm : public UseStackEvaluableT<ListAlgorithm> {
-  ListAlgorithm(String id, lsaot t, EvaluablePtr c, EvaluablePtr list = {},
-                StackVariablesPtr cp = {})
-      : UseStackEvaluableT<ListAlgorithm>(std::move(cp), std::move(id)),
+  ListAlgorithm(Evaluable* parent, String id, lsaot t, EvaluablePtr c,
+                EvaluablePtr list = {}, LocalVariablesPtr cp = {})
+      : UseStackEvaluableT<ListAlgorithm>(parent, std::move(cp), std::move(id)),
         type(t),
         list(std::move(list)),
         cond(std::move(c)) {}
@@ -382,18 +374,26 @@ struct ListAlgorithm : public UseStackEvaluableT<ListAlgorithm> {
   lsaot type;
   EvaluablePtr list;
   EvaluablePtr cond;
+
+  // UseStackEvaluable interface
+ public:
+  String typeID() const override { return strJoin(type); }
 };
 
 template <class _SpecificFI>
 struct FunctionInvocationBase : public UseStackEvaluableT<_SpecificFI> {
-  FunctionInvocationBase(String id, String name, EvaluablePtr param,
-                         StackVariablesPtr cp = {})
-      : UseStackEvaluableT<_SpecificFI>(std::move(cp), std::move(id)),
+  FunctionInvocationBase(Evaluable* parent, String id, String name,
+                         EvaluablePtr param, LocalVariablesPtr cp = {})
+      : UseStackEvaluableT<_SpecificFI>(parent, std::move(cp), std::move(id)),
         name(std::move(name)),
         param(std::move(param)) {}
 
   String name;
   EvaluablePtr param;
+
+  // UseStackEvaluable interface
+ public:
+  String typeID() const override { return name; }
 };
 
 struct ContextFI : public FunctionInvocationBase<ContextFI> {
@@ -403,11 +403,24 @@ struct ContextFI : public FunctionInvocationBase<ContextFI> {
 
 struct ModuleFI : public FunctionInvocationBase<ModuleFI> {
   using _Base = FunctionInvocationBase<ModuleFI>;
-  ModuleFI(String id, String name, EvaluablePtr param, FunctionModulePtr mdl,
-           StackVariablesPtr cp = {})
-      : _Base(move(id), move(name), move(param), std::move(cp)),
+  ModuleFI(Evaluable* parent, String id, String name, EvaluablePtr param,
+           FunctionModulePtr mdl, LocalVariablesPtr cp = {})
+      : _Base(parent, move(id), move(name), move(param), std::move(cp)),
         module(std::move(mdl)) {}
   FunctionModulePtr module;
+};
+
+struct MacroFI : public FunctionInvocationBase<MacroFI> {
+  using _Base = FunctionInvocationBase<MacroFI>;
+  MacroFI(Evaluable* parent, String name, MacroPtr macro, EvaluablePtr param,
+          LocalVariablesPtr cp = {}, String id = {})
+      : _Base(parent, move(id), move(name), move(param), std::move(cp)),
+        macro(std::move(macro)) {}
+  MacroPtr macro;
+
+  // UseStackEvaluable interface
+ public:
+  String typeID() const { return strJoin('!', name); }
 };
 
 struct EvaluatorFI : public FunctionInvocationBase<EvaluatorFI> {
@@ -415,83 +428,124 @@ struct EvaluatorFI : public FunctionInvocationBase<EvaluatorFI> {
   using _Base::_Base;
 };
 
-struct VariableFieldQuery : public StacklessEvaluableT<VariableFieldQuery> {
-  using _Base = StacklessEvaluableT<VariableFieldQuery>;
-  VariableFieldQuery(String name, std::vector<EvaluablePtr> path)
-      : name(std::move(name)), field_path(std::move(path)) {}
+struct ObjectPropertyQuery : public StacklessEvaluableT<ObjectPropertyQuery> {
+  using _Base = StacklessEvaluableT<ObjectPropertyQuery>;
+  ObjectPropertyQuery(Evaluable* parent, EvaluablePtr variable,
+                      std::vector<EvaluablePtr> path)
+      : _Base(parent),
+        object(std::move(variable)),
+        propertyPath(std::move(path)) {}
 
-  String name;
-  std::vector<EvaluablePtr> field_path;
+  EvaluablePtr object;
+  std::vector<EvaluablePtr> propertyPath;
 };
 
 struct Variable : public StacklessEvaluableT<Variable> {
   using _Base = StacklessEvaluableT<Variable>;
   using _Base::_Base;
-  Variable(String name) : name(std::move(name)) {}
+  Variable(Evaluable* parent, String name)
+      : _Base(parent), name(std::move(name)) {}
   String name;
 };
 
+struct ContextArgument : public StacklessEvaluableT<ContextArgument> {
+  using _Base = StacklessEvaluableT<ContextArgument>;
+  using _Base::_Base;
+  ContextArgument(Evaluable* parent, int index)
+      : _Base(parent), index(std::move(index)) {}
+  int index;
+};
+
+struct ContextArgumentsInfo : public StacklessEvaluableT<ContextArgumentsInfo> {
+  using _Base = StacklessEvaluableT<ContextArgumentsInfo>;
+  using _Base::_Base;
+  enum class Type { Args, ArgCount };
+
+  ContextArgumentsInfo(Evaluable* parent, Type type)
+      : _Base(parent), type(type) {}
+  Type type;
+};
+
 template <class T>
-inline auto makeConst(T&& val) {
-  return std::make_shared<Constant>(std::forward<T>(val));
+inline auto makeConst(Evaluable* parent, T&& val) {
+  return std::make_shared<Constant>(parent, std::forward<T>(val));
 }
-inline auto makeOp(String id, aot op, Evaluables params,
-                   StackVariablesPtr cp = {}) {
+inline auto makeOp(Evaluable* parent, String id, aot op, Evaluables params = {},
+                   LocalVariablesPtr cp = {}) {
   return std::make_shared<ArithmaticalOperator>(
-      std::move(id), op, std::move(params), std::move(cp));
+      parent, std::move(id), op, std::move(params), std::move(cp));
 }
-inline auto makeOp(String id, asot op, Evaluables params,
-                   StackVariablesPtr cp = {}) {
+
+inline auto makeOp(Evaluable* parent, String id, asot op,
+                   Evaluables params = {}, LocalVariablesPtr cp = {}) {
   return std::make_shared<ArthmSelfAssignOperator>(
-      std::move(id), op, std::move(params), std::move(cp));
+      parent, std::move(id), op, std::move(params), std::move(cp));
 }
-inline auto makeOp(String id, lot op, Evaluables params,
-                   StackVariablesPtr cp = {}) {
-  return std::make_shared<LogicalOperator>(std::move(id), op, std::move(params),
-                                           std::move(cp));
+inline auto makeOp(Evaluable* parent, String id, lot op, Evaluables params = {},
+                   LocalVariablesPtr cp = {}) {
+  return std::make_shared<LogicalOperator>(parent, std::move(id), op,
+                                           std::move(params), std::move(cp));
 }
-inline auto makeOp(String id, cot op, Evaluables params,
-                   StackVariablesPtr cp = {}) {
-  return std::make_shared<ComparisonOperator>(std::move(id), op,
+inline auto makeOp(Evaluable* parent, String id, cot op, Evaluables params = {},
+                   LocalVariablesPtr cp = {}) {
+  return std::make_shared<ComparisonOperator>(parent, std::move(id), op,
                                               std::move(params), std::move(cp));
 }
-inline auto makeOp(String id, lsaot op, EvaluablePtr cond, EvaluablePtr list,
-                   StackVariablesPtr cp = {}) {
-  return std::make_shared<ListAlgorithm>(std::move(id), op, std::move(cond),
-                                         std::move(list), std::move(cp));
+inline auto makeOp(Evaluable* parent, String id, lsaot op, EvaluablePtr cond,
+                   EvaluablePtr list, LocalVariablesPtr cp = {}) {
+  return std::make_shared<ListAlgorithm>(parent, std::move(id), op,
+                                         std::move(cond), std::move(list),
+                                         std::move(cp));
 }
 
 template <class _FI>
-inline auto makeSimpleFI(String id, String name, EvaluablePtr param = {},
-                         StackVariablesPtr cp = {}) {
-  return std::make_shared<_FI>(std::move(id), std::move(name), std::move(param),
-                               std::move(cp));
+inline auto makeSimpleFI(Evaluable* parent, String id, String name,
+                         EvaluablePtr param = {}, LocalVariablesPtr cp = {}) {
+  return std::make_shared<_FI>(parent, std::move(id), std::move(name),
+                               std::move(param), std::move(cp));
 }
 
-inline auto makeModuleFI(String id, String name, EvaluablePtr param = {},
-                         FunctionModulePtr mdl = {},
-                         StackVariablesPtr cp = {}) {
-  return std::make_shared<ModuleFI>(std::move(id), std::move(name),
+inline auto makeModuleFI(Evaluable* parent, String id, String name,
+                         FunctionModulePtr mdl = {}, EvaluablePtr param = {},
+                         LocalVariablesPtr cp = {}) {
+  return std::make_shared<ModuleFI>(parent, std::move(id), std::move(name),
                                     std::move(param), std::move(mdl),
                                     std::move(cp));
 }
 
-inline auto makeVar(String variableName) {
-  return std::make_shared<Variable>(std::move(variableName));
+inline auto makeMacroFI(Evaluable* parent, String id, String name,
+                        MacroPtr macro, EvaluablePtr param = {},
+                        LocalVariablesPtr stackVars = {}) {
+  return std::make_shared<MacroFI>(parent, std::move(name), std::move(macro),
+                                   std::move(param), std::move(stackVars),
+                                   std::move(id));
 }
 
-inline auto makeVariableFieldQuery(String name,
+inline auto makeVariable(Evaluable* parent, String name) {
+  return std::make_shared<Variable>(parent, std::move(name));
+}
+
+inline auto makeCtxtArg(Evaluable* parent, uint8_t pos) {
+  return std::make_shared<ContextArgument>(parent, pos);
+}
+
+inline auto makeCtxtArgInfo(Evaluable* parent,
+                            ContextArgumentsInfo::Type type) {
+  return std::make_shared<ContextArgumentsInfo>(parent, type);
+}
+
+inline auto makeVariableFieldQuery(Evaluable* parent, EvaluablePtr variable,
                                    std::vector<EvaluablePtr> paths) {
-  return std::make_shared<VariableFieldQuery>(std::move(name),
-                                              std::move(paths));
+  return std::make_shared<ObjectPropertyQuery>(parent, std::move(variable),
+                                               std::move(paths));
 }
 
-inline auto makeEvbDict(EvaluableDict::value_type v = {}) {
-  return std::make_shared<EvaluableDict>(std::move(v));
+inline auto makeEvbDict(Evaluable* parent, EvaluableDict::value_type v = {}) {
+  return std::make_shared<EvaluableDict>(parent, std::move(v));
 }
 
-inline auto makeEvbList(EvaluableList::value_type v = {}) {
-  return std::make_shared<EvaluableList>(std::move(v));
+inline auto makeEvbList(Evaluable* parent, EvaluableList::value_type v = {}) {
+  return std::make_shared<EvaluableList>(parent, std::move(v));
 }
 
 }  // namespace jas

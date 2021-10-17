@@ -17,5 +17,4 @@ set(JAS_PRECOMPILE_HEADERS
     <algorithm>
     "include/jas/Json.h"
     "include/jas/String.h"
-    "include/jas/Exception.h"
     )

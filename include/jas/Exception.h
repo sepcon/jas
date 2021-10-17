@@ -32,7 +32,9 @@ void throw_(_args&&... args) {
   throw e;
 }
 
-#define __jas_throw(ExceptionType, ...) throw_<ExceptionType>(__VA_ARGS__)
+#define __jas_throw(ExceptionType, ...) \
+  throw_<ExceptionType>(__VA_ARGS__);   \
+  throw  // avoid throw
 #define __jas_throw_if(ExceptionType, condition, ...) \
   if (condition) {                                    \
     __jas_throw(ExceptionType, __VA_ARGS__);          \

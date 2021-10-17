@@ -8,6 +8,7 @@
 #include <map>
 
 #include "jas/FunctionModuleBaseT.h"
+#include "jas/SyntaxEvaluatorImpl.h"
 
 namespace jas {
 namespace mdl {
@@ -298,6 +299,10 @@ class CIFModule : public FunctionModuleBaseT<JasUtilityFunction> {
         {JASSTR("abs"), abs},
     };
     return _;
+  }
+  Var invoke(const JasUtilityFunction& func, EvaluablePtr param,
+             SyntaxEvaluatorImpl* evaluator) override {
+    return func(evaluator->evalAndReturn(param.get()));
   }
 };
 

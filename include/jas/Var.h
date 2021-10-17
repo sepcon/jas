@@ -1,8 +1,5 @@
 #pragma once
 
-// TBD: Implement its own path class - don't reply on filesystem path due to
-// unicode issue when dealing with both wchar_t and char
-
 #include <map>
 #include <vector>
 
@@ -146,7 +143,7 @@ class Var {
   friend bool operator>(const Var& first, const Var& second);
   friend bool operator>=(const Var& first, const Var& second);
   friend bool operator<=(const Var& first, const Var& second);
-
+  friend OStream& operator<<(OStream& os, const Var& var);
   ValuePtr value;
 };
 
