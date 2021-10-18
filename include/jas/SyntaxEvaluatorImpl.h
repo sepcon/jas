@@ -46,7 +46,7 @@ class SyntaxEvaluatorImpl : public EvaluatorIF {
   void eval(const ContextArgument& arg) override;
   void eval(const ContextArgumentsInfo& arginf) override;
 
-  Var* _queryOrEvalVariable(const String& variableName);
+  Var* _findAndEvalNotInitializedVariableOrThrow(const String& variableName);
   void _evalOnStack(const Evaluable* e, String ctxtID = {},
                     ContextArguments ctxtInput = {});
   Var evalAndReturn(const Evaluable* e, String ctxtID = {},

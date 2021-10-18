@@ -10,6 +10,7 @@ class EvaluationStack {
   EvaluationStack();
   ~EvaluationStack();
 
+  void repush(EvaluationFramePtr ptr);
   void push(String ctxtID, const Evaluable* evb,
             ContextArguments contextData = {});
   void init(EvalContextPtr rootContext, const Evaluable* e);

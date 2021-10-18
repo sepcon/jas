@@ -605,12 +605,18 @@ struct TranslatorImpl {
       if (!j.isString()) {
         break;
       }
-      decltype(auto) expression = j.asString();
+      auto& expression = j.asString();
       if (!isVariableLike(expression)) {
         break;
       }
       if (evb = _translateVariablePropertyQuery(parent, expression); evb) {
         break;
+      }
+      if (expression.find(JASSTR(':')) != String::npos) {
+        if (evb = this->translateImpl(parent, _constructJAS(expression, false));
+            evb) {
+          break;
+        }
       }
       auto varName = expression.substr(1);
       __jas_throw_if(SyntaxError, varName.empty(),
@@ -623,7 +629,7 @@ struct TranslatorImpl {
   EvaluablePtr _translateVariablePropertyQuery(Evaluable* parent,
                                                const String& expression) {
     using namespace std;
-    static const Regex rgxVariableFieldQuery{JASSTR(
+    static const Regex rgxVariablePropertyQuery{JASSTR(
         R"_regex(\$(\.?\*?[a-zA-Z_0-9]*)\[((?:\$[a-zA-Z_]+[0-9]*|[@:a-zA-Z_0-9\-]+|[\/]*)+)\])_regex")};
     static const Regex rgxField{JASSTR(R"_regex([^\/]+)_regex")};
 
@@ -631,7 +637,7 @@ struct TranslatorImpl {
     EvaluablePtr evb;
     do {
       RegexMatchResult matches;
-      if (!regex_match(expression, matches, rgxVariableFieldQuery) ||
+      if (!regex_match(expression, matches, rgxVariablePropertyQuery) ||
           (matches.size() != 3)) {
         break;
       }
@@ -648,7 +654,7 @@ struct TranslatorImpl {
           auto subExpr = fieldIt->str();
           Var jsubExpr;
           if (subExpr.find(JASSTR(':')) != String::npos) {
-            jsubExpr = this->constructJAS(subExpr);
+            jsubExpr = this->_constructJAS(subExpr);
           } else {
             jsubExpr = subExpr;
           }
@@ -683,18 +689,18 @@ struct TranslatorImpl {
       }
       return std::move(reconstructedObject);
     } else if (j.isString()) {
-      return constructJAS(j.asString());
+      return _constructJAS(j.asString());
     } else {
       return j;
     }
   }
 
-  Var constructJAS(const String& expression) {
+  Var _constructJAS(const String& expression, bool ignoreVariable = true) {
     if (expression.empty()) {
       return expression;
     }
 
-    if (isVariableLike(expression)) {
+    if (isVariableLike(expression) && ignoreVariable) {
       return expression;
     }
 
@@ -738,7 +744,7 @@ struct TranslatorImpl {
   Var constructJAS(const String& specifier, const String& expression) {
     if (isVariableLike(specifier) || isSpecifierLike(specifier) ||
         isVariableLike(expression) || isSpecifierLike(expression)) {
-      return Var::dict({{specifier, constructJAS(expression)}});
+      return Var::dict({{specifier, _constructJAS(expression)}});
     }
     return {};
   }

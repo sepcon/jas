@@ -13,3 +13,7 @@
 null
 {"$field_arr":"arr","$item3_idx":2,"$object":{"arr":[{"name":"item1"},{"name":"item2"},{"name":"item3"}]},"myquery":"$object[$field_arr/$item3_idx/name]"}
 {"myquery":"item3"}
+"$variable:1(%d)"
+1
+"text:$variable:1"
+{"text": "1"}

@@ -11,6 +11,11 @@ EvaluationStack::EvaluationStack() {}
 
 EvaluationStack::~EvaluationStack() {}
 
+void EvaluationStack::repush(EvaluationFramePtr ptr) {
+  assert(topFrame == ptr->parent);
+  topFrame = move(ptr);
+}
+
 void EvaluationStack::push(String ctxtID, const Evaluable *evb,
                            ContextArguments contextData) {
   auto subCtxt = topFrame->context->subContext(ctxtID, move(contextData));

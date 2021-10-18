@@ -174,18 +174,20 @@ void SyntaxEvaluatorImpl::eval(const Constant& v) {
 }
 
 void SyntaxEvaluatorImpl::eval(const EvaluableDict& v) {
-  auto evaluated = Var::dict();
-  if (!v.id.empty()) {
-    evaluated.add(String{keyword::id}, v.id);
-  }
-
   evaluateLocalSymbols(v);
+  if (v.value.empty() && v.localVariables && v.localVariables->size() == 1) {
+    auto& [varname, _] = *(v.localVariables->begin());
+    auto val = stack_->top()->context->lookupVariable(varname);
+    assert(val && "Variable must be available here");
+    stack_->return_(*val, v);
+  } else {
+    auto evaluated = Var::dict();
+    for (auto& [key, val] : v.value) {
+      evaluated.add(key, evalAndReturn(val.get(), strJoin(key, '.')));
+    }
 
-  for (auto& [key, val] : v.value) {
-    evaluated.add(key, evalAndReturn(val.get(), strJoin(key, '.')));
+    stack_->return_(evaluated.empty() ? Var{} : move(evaluated), v);
   }
-
-  stack_->return_(move(evaluated), v);
 }
 
 void SyntaxEvaluatorImpl::eval(const EvaluableList& v) {
@@ -437,10 +439,11 @@ void SyntaxEvaluatorImpl::eval(const ModuleFI& fi) {
 void SyntaxEvaluatorImpl::eval(const MacroFI& macro) {
   evaluateLocalSymbols(macro);
   auto args = evalAndReturn(macro.param.get());
-  __stackUnwindThrowIf(EvaluationError, !args.isList(),
-                       "Not evaluated to list of arguments: ",
-                       SyntaxValidator::syntaxOf(macro.param));
-  stack_->top()->context->args(args.asList());
+  //  __stackUnwindThrowIf(EvaluationError, !args.isList(),
+  //                       "Not evaluated to list of arguments: ",
+  //                       SyntaxValidator::syntaxOf(macro.param));
+  stack_->top()->context->args(args.isList() ? args.asList()
+                                             : ContextArguments{args});
   stack_->return_(evalAndReturn(macro.macro.get()));
 }
 
@@ -469,8 +472,12 @@ void SyntaxEvaluatorImpl::eval(const ObjectPropertyQuery& query) {
   } while (false);
 }
 
-void SyntaxEvaluatorImpl::eval(const Variable& prop) {
-  stack_->return_(*_queryOrEvalVariable(prop.name));
+void SyntaxEvaluatorImpl::eval(const Variable& variable) {
+  auto val = stack_->top()->context->lookupVariable(variable.name);
+  if (!val) {
+    val = _findAndEvalNotInitializedVariableOrThrow(variable.name);
+  }
+  stack_->return_(*val);
 }
 
 void SyntaxEvaluatorImpl::eval(const ContextArgument& arg) {
@@ -488,37 +495,34 @@ void SyntaxEvaluatorImpl::eval(const ContextArgumentsInfo& arginf) {
   }
 }
 
-Var* SyntaxEvaluatorImpl::_queryOrEvalVariable(const String& variableName) {
-  auto val = stack_->top()->context->lookupVariable(variableName);
-  if (!val) {
-    // loop through stack to find the not evaluated property
-    auto currentFrame = stack_->top();
-    do {
-      assert(currentFrame->evb->useStack());
-      auto currentEvb =
-          static_cast<const UseStackEvaluable*>(currentFrame->evb);
-      if (!currentEvb->localVariables) {
-        currentFrame = currentFrame->parent;
-        continue;
-      }
-
-      if (auto itProp = currentEvb->localVariables->find(variableName);
-          itProp != std::end(*currentEvb->localVariables)) {
-        auto& varInfo = itProp->second;
-        auto varStatus = currentFrame->variableStatus(variableName);
-        // if variable was not found on top context, then it should not be
-        // evaluated yet
-        assert(varStatus != VariableStatus::Evaluated);
-        __stackUnwindThrowIf(
-            EvaluationError, varStatus == VariableStatus::Evaluating,
-            "Cyclic reference detected on variable: $", variableName);
-        val = evaluateSingleVar(currentFrame, variableName, varInfo);
-        break;
-      }
+Var* SyntaxEvaluatorImpl::_findAndEvalNotInitializedVariableOrThrow(
+    const String& variableName) {
+  Var* val = nullptr;
+  // loop through stack to find the not evaluated property
+  auto currentFrame = stack_->top();
+  do {
+    assert(currentFrame->evb->useStack());
+    auto currentEvb = static_cast<const UseStackEvaluable*>(currentFrame->evb);
+    if (!currentEvb->localVariables) {
       currentFrame = currentFrame->parent;
-    } while (currentFrame);
-  }
+      continue;
+    }
 
+    if (auto itProp = currentEvb->localVariables->find(variableName);
+        itProp != std::end(*currentEvb->localVariables)) {
+      auto& varInfo = itProp->second;
+      auto varStatus = currentFrame->variableStatus(variableName);
+      // if variable was not found on top context, then it should not be
+      // evaluated yet
+      assert(varStatus != VariableStatus::Evaluated);
+      __stackUnwindThrowIf(
+          EvaluationError, varStatus == VariableStatus::Evaluating,
+          "Cyclic reference detected on variable: $", variableName);
+      val = evaluateSingleVar(currentFrame, variableName, varInfo);
+      break;
+    }
+    currentFrame = currentFrame->parent;
+  } while (currentFrame);
   __jas_throw_if(EvaluationError, !val, "Unknown reference to variable `$",
                  variableName, "`");
   return val;
@@ -604,7 +608,16 @@ Var* SyntaxEvaluatorImpl::evaluateSingleVar(const EvaluationFramePtr& frame,
     ret = frame->context->putVariable(varname, move(val));
   } else {
     ret = frame->context->lookupVariable(varname);
-    __stackUnwindThrowVariableNotFoundIf(!ret, varname);
+    if (!ret) {
+      // Case 2: Variable assignment, it must be initialized in its parent scope
+      // for this situation, the variable is queried before its initialization,
+      // then we need to pop current frame to eval the variable, then re-push
+      // the top frame after initialization complete
+      auto savedFrame1 = stack_->top();
+      stack_->pop();
+      ret = _findAndEvalNotInitializedVariableOrThrow(varname);
+      stack_->repush(savedFrame1);
+    }
     ret->assign(move(val));
   }
   frame->finishEvaluatingVar(varname);

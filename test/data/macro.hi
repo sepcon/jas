@@ -7,4 +7,8 @@
 {"!_unique":{"@list.unique:@list.sort":"$*"},"$ununique_list":[3,3,2,2,1,1],"totalN1":{"@plus":[1,"@len:@_unique:$ununique_list"]}}
 {}
 {"totalN1":4}
+{"!to_int":{"$tmp":0,"$istrue:@and":[{"@eq":["$1",true]},{"$+tmp":1,"@return":true}],"@return":"$tmp"},"true:@to_int":true,"false:@to_int":false}
+{}
+{"true":1,"false":0}
+
 
