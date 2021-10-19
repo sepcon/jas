@@ -50,7 +50,7 @@ namespace alg {
   return {};                          \
   }
 
-EvaluableList::value_type& _2args(const EvaluablePtr& input) {
+EvaluableList::ValueType& _2args(const EvaluablePtr& input) {
   return static_cast<EvaluableList*>(input.get())->value;
 }
 

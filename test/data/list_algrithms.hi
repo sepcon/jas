@@ -22,10 +22,10 @@ false
 {"@or": [false, false, false, {"@any_of":true}]}
 [1]
 true
-{"@count_if":{"@cond:@ge":["@field:",2]}}
+{"@count_if":{"@cond:@ge":["@field",2]}}
 [1,1,2,3,4]
 3
-{"@any_of":{"@cond:@ge":["@field:",2]}}
+{"@any_of":{"@cond:@ge":["@field",2]}}
 [1,1,2,3,4]
 true
 {"@any_of":{"@cond:@ge":["@field",4]}}

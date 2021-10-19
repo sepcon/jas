@@ -179,14 +179,14 @@ void SyntaxEvaluatorImpl::eval(const EvaluableDict& v) {
     auto& [varname, _] = *(v.localVariables->begin());
     auto val = stack_->top()->context->lookupVariable(varname);
     assert(val && "Variable must be available here");
-    stack_->return_(*val, v);
+    stack_->return_(*val);
   } else {
     auto evaluated = Var::dict();
     for (auto& [key, val] : v.value) {
       evaluated.add(key, evalAndReturn(val.get(), strJoin(key, '.')));
     }
 
-    stack_->return_(evaluated.empty() ? Var{} : move(evaluated), v);
+    stack_->return_(evaluated.empty() ? Var{} : move(evaluated));
   }
 }
 
@@ -237,7 +237,7 @@ void SyntaxEvaluatorImpl::eval(const ArithmaticalOperator& op) {
     __MC_BASIC_OPERATION_EVAL_END_RETURN(op, Var{})
   });
 
-  stack_->return_(move(e), op);
+  stack_->return_(move(e));
 }
 
 void SyntaxEvaluatorImpl::eval(const ArthmSelfAssignOperator& op) {
@@ -294,7 +294,7 @@ void SyntaxEvaluatorImpl::eval(const ArthmSelfAssignOperator& op) {
   }
 
   varVal.assign(move(result));
-  stack_->return_(move(varVal), op);
+  stack_->return_(move(varVal));
   __MC_BASIC_OPERATION_EVAL_END(op)
 }
 
@@ -320,7 +320,7 @@ void SyntaxEvaluatorImpl::eval(const LogicalOperator& op) {
     }
     __MC_BASIC_OPERATION_EVAL_END_RETURN(op, Var{})
   });
-  stack_->return_(move(e), op);
+  stack_->return_(move(e));
 }
 
 void SyntaxEvaluatorImpl::eval(const ComparisonOperator& op) {
@@ -351,7 +351,7 @@ void SyntaxEvaluatorImpl::eval(const ComparisonOperator& op) {
     }
     __MC_BASIC_OPERATION_EVAL_END_RETURN(op, false)
   });
-  stack_->return_(move(e), op);
+  stack_->return_(move(e));
 }
 
 void SyntaxEvaluatorImpl::eval(const ListAlgorithm& op) {
@@ -405,7 +405,7 @@ void SyntaxEvaluatorImpl::eval(const ListAlgorithm& op) {
     default:
       break;
   }
-  stack_->return_(move(finalEvaled), op);
+  stack_->return_(move(finalEvaled));
 }
 
 template <class _FI>
@@ -433,17 +433,15 @@ void SyntaxEvaluatorImpl::eval(const ModuleFI& fi) {
   //  auto evaluatedParam = _evalFIParam(this, fi);
   evaluateLocalSymbols(fi);
   auto funcRet = fi.module->eval(fi.name, fi.param, this);
-  stack_->return_(move(funcRet), fi);
+  stack_->return_(move(funcRet));
 }
 
 void SyntaxEvaluatorImpl::eval(const MacroFI& macro) {
   evaluateLocalSymbols(macro);
   auto args = evalAndReturn(macro.param.get());
-  //  __stackUnwindThrowIf(EvaluationError, !args.isList(),
-  //                       "Not evaluated to list of arguments: ",
-  //                       SyntaxValidator::syntaxOf(macro.param));
-  stack_->top()->context->args(args.isList() ? args.asList()
-                                             : ContextArguments{args});
+  assert((args.isNull() || args.isList()) &&
+         "evaluated params must be null(aka void) or a list of arguments");
+  stack_->top()->context->args(args.isNull() ? ContextArguments{} : args);
   stack_->return_(evalAndReturn(macro.macro.get()));
 }
 

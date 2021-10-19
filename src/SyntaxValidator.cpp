@@ -83,7 +83,7 @@ class SyntaxValidatorImpl : public EvaluatorIF {
   void evaluate(const EvaluablePtr& e) { _eval(e.get()); }
   void evaluate(const Evaluable& e) { _eval(&e); }
 
-  bool dumpstackVariables(const LocalVariablesPtr& params) {
+  bool _dumpstackVariables(const LocalVariablesPtr& params) {
     if (params) {
       os_ << "set(";
       auto it = std::begin(*params);
@@ -99,18 +99,9 @@ class SyntaxValidatorImpl : public EvaluatorIF {
     }
     return false;
   }
-  bool decorateId(const UseStackEvaluable& e) {
-    if (!e.id.empty()) {
-      os_ << prefix::variable << e.id << JASSTR("=");
-      return true;
-    }
-    return false;
-  }
 
-  bool _evalStackEvb(const UseStackEvaluable& evb) {
-    auto ret = decorateId(evb);
-    ret |= dumpstackVariables(evb.localVariables);
-    return ret;
+  bool _evalStackSymbols(const UseStackEvaluable& evb) {
+    return _dumpstackVariables(evb.localVariables);
   }
 
   void eval(const Constant& val) override { os_ << val.value.dump(); }
@@ -232,7 +223,35 @@ class SyntaxValidatorImpl : public EvaluatorIF {
     _eval<ModuleFI>(fnc);
   }
 
-  void eval(const MacroFI& macro) override { _eval<MacroFI>(macro); }
+  void eval(const MacroFI& macro) override {
+    os_ << (macro.name.empty()
+                ? bookMarkError(JASSTR("Funtion name must not be empty"))
+                : macro.name);
+    os_ << JASSTR("(");
+    if (macro.param) {
+      if (isType<EvaluableList>(macro.param)) {
+        auto listParams = static_cast<const EvaluableList*>(macro.param.get());
+        assert(!listParams->value.empty() &&
+               "List params must not be empty at this point");
+        auto it = std::begin(listParams->value);
+        _eval(it->get());
+        while (++it != std::end(listParams->value)) {
+          os_ << JASSTR(",");
+          _eval(it->get());
+        }
+      } else if (isType<Constant>(macro.param)) {
+        auto asConst = static_cast<const Constant*>(macro.param.get());
+        assert(asConst->value.isList() && "Must be a list here");
+        auto it = std::begin(asConst->value.asList());
+        os_ << *it;
+        while (++it != std::end(asConst->value.asList())) {
+          os_ << JASSTR(",");
+          os_ << *it;
+        }
+      }
+    }
+    os_ << JASSTR(")");
+  }
 
   void eval(const ObjectPropertyQuery& vfq) override {
     evaluate(vfq.object);
@@ -278,7 +297,7 @@ class SyntaxValidatorImpl : public EvaluatorIF {
     if (evb) {
       if (evb->useStack()) {
         auto shouldClose = false;
-        if (_evalStackEvb(static_cast<const UseStackEvaluable&>(*evb))) {
+        if (_evalStackSymbols(static_cast<const UseStackEvaluable&>(*evb))) {
           shouldClose = true;
           os_ << "(";
         }

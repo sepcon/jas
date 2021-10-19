@@ -270,6 +270,54 @@ Var abs(const Var& data) {
   }
 }
 
+Var range(const Var& data) {
+  __jas_func_throw_invalidargs_if(
+      !data.isList() || data.size() > 3 || data.size() == 0,
+      "expect a list as [begin, end, (step)]", data);
+  auto& options = data.asList();
+  auto& vstart = options.front();
+  auto& vend = options[1];
+  __jas_func_throw_invalidargs_if(!vstart.isNumber() || !vend.isNumber(),
+                                  "Expect a list of numbers", data);
+
+  Number start = vstart;
+  Number end = vend;
+  Number step = start < end ? 1 : -1;
+  if (options.size() == 3) {
+    __jas_func_throw_invalidargs_if(!options[2].isInt(),
+                                    "Expect step is a number", options[2]);
+    step = options[2];
+  }
+
+  __jas_func_throw_invalidargs_if(step == Number{0}, "Step must not be Zero",
+                                  data);
+  Var::List range;
+  if (start < end) {
+    if (step > Number{0}) {
+      do {
+        range.emplace_back(start);
+      } while ((start += step) < end);
+    } else {
+      range.emplace_back(start);
+      while (start < (end += step)) {
+        range.emplace_back(end);
+      }
+    }
+  } else {
+    if (step > Number{0}) {
+      do {
+        range.emplace_back(start);
+      } while ((start -= step) > end);
+    } else {
+      range.emplace_back(start);
+      while (start > (end -= step)) {
+        range.emplace_back(end);
+      }
+    }
+  }
+  return range;
+}
+
 class CIFModule : public FunctionModuleBaseT<JasUtilityFunction> {
  public:
   String moduleName() const override { return {}; }
@@ -297,6 +345,7 @@ class CIFModule : public FunctionModuleBaseT<JasUtilityFunction> {
         {JASSTR("empty"), empty},
         {JASSTR("not_empty"), not_empty},
         {JASSTR("abs"), abs},
+        {JASSTR("range"), range},
     };
     return _;
   }

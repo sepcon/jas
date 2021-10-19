@@ -25,7 +25,6 @@ namespace jas {
 struct EvaluableInfo {
   String type;
   Var params;
-  String id;
 };
 
 using std::make_shared;
@@ -123,7 +122,7 @@ struct TranslatorImpl {
     if (j.isDict()) {
       for (auto& [key, val] : j.asDict()) {
         if (!key.empty() && key[0] == prefix::specifier) {
-          evbi = EvaluableInfo{key, val, j.getAt(keyword::id).getString()};
+          evbi = EvaluableInfo{key, val};
           break;
         }
       }
@@ -202,10 +201,10 @@ struct TranslatorImpl {
                                   const Var& expression,
                                   const OptionalEvbInfo& evbInfo) {
       if (evbInfo) {
-        auto& [sop, jevaluation, id] = evbInfo.value();
+        auto& [sop, jevaluation] = evbInfo.value();
         if (auto op = _Base::mapToEvbType(sop);
             op != _operation_type::invalid) {
-          auto evbOp = makeOp(parent, id, op);
+          auto evbOp = makeOp(parent, op);
           extractLocalSymbols(translator, evbOp.get(), expression);
 
           auto& params = evbOp->params;
@@ -304,7 +303,7 @@ struct TranslatorImpl {
         if (!evbInfo) {
           break;
         }
-        auto& [sop, jevaluable, id] = evbInfo.value();
+        auto& [sop, jevaluable] = evbInfo.value();
         auto op = mapToEvbType(sop);
         if (op == lsaot::invalid) {
           break;
@@ -313,9 +312,9 @@ struct TranslatorImpl {
         EvaluablePtr evbCond;
         EvaluablePtr list;
 
-        output = makeOp(parent, id, op, {}, {});
+        output = makeOp(parent, op);
         auto listFromCurrentContextData = [output] {
-          return makeSimpleFI<ContextFI>(output.get(), {}, JASSTR("field"));
+          return makeSimpleFI<ContextFI>(output.get(), JASSTR("field"));
         };
         extractLocalSymbols(translator, output.get(), expression);
 
@@ -448,9 +447,9 @@ struct TranslatorImpl {
                          "FunctionInvocation name after "
                          "module-separator(.) must not be empty `",
                          str, "`");
-          return std::make_pair(funcName, moduleName);
+          return std::make_pair(move(funcName), move(moduleName));
         } else {
-          return std::make_pair(funcName, StringView{JASSTR("")});
+          return std::make_pair(move(funcName), StringView{JASSTR("")});
         }
       };
 
@@ -470,10 +469,10 @@ struct TranslatorImpl {
 
         if (translator->isContextFI(moduleName, funcName)) {
           return _completeInvocation(
-              makeSimpleFI<ContextFI>(parent, id, String(funcName)));
+              makeSimpleFI<ContextFI>(parent, String(funcName)));
         } else if (translator->isJasFunction(moduleName, funcName)) {
           return _completeInvocation(
-              makeSimpleFI<EvaluatorFI>(parent, id, String(funcName)));
+              makeSimpleFI<EvaluatorFI>(parent, String(funcName)));
         } else if (!moduleName.empty()) {
           auto module = translator->moduleMgr_->getModule(moduleName);
           __jas_throw_if(SyntaxError, !module, "Theres no module named `",
@@ -483,21 +482,43 @@ struct TranslatorImpl {
                          "There's no function named `", funcName,
                          "` in module `", moduleName, "`");
           return _completeInvocation(
-              makeModuleFI(parent, id, String(funcName), move(module)));
+              makeModuleFI(parent, String(funcName), move(module)));
         } else {
           auto module = translator->moduleMgr_->getModule(moduleName);
           if (module && module->has(funcName)) {
             return _completeInvocation(
-                makeModuleFI(parent, id, String(funcName), move(module)));
+                makeModuleFI(parent, String(funcName), move(module)));
           } else if (auto module =
                          translator->moduleMgr_->findModuleByFuncName(funcName);
                      module) {
             return _completeInvocation(
-                makeModuleFI(parent, id, String(funcName), move(module)));
+                makeModuleFI(parent, String(funcName), move(module)));
           }
         }
 
-        auto mcfi = _completeInvocation(makeMacroFI(parent, id, funcName, {}));
+        auto mcfi = _completeInvocation(makeMacroFI(parent, funcName, {}));
+        // 1. if is constant-list: let it be itself
+        // 2. if it is EVBList -> let it be it self
+        // 3. else: let it be EVBList{itself}
+        do {
+          if (!mcfi->param) {
+            break;
+          }
+          if (isType<EvaluableList>(mcfi->param)) {
+            break;
+          }
+          if (isType<Constant>(mcfi->param)) {
+            if (static_cast<const Constant*>(mcfi->param.get())
+                    ->value.isList()) {
+              break;
+            }
+          }
+
+          mcfi->param = makeEvbList(
+              mcfi.get(), EvaluableList::ValueType{move(mcfi->param)});
+
+        } while (false);
+
         mcfi->macro = mcfi->resolveMacro(funcName);
         __jas_throw_if(SyntaxError, !mcfi->macro,
                        "Unknown reference to function: `@", funcName);
@@ -505,7 +526,7 @@ struct TranslatorImpl {
       };
 
       if (evbInfo) {
-        auto& [sop, jevaluable, id] = evbInfo.value();
+        auto& [sop, jevaluable] = evbInfo.value();
         if (isSpecifierLike(sop)) {
           std::tie(funcName, moduleName) = splitModule(sop);
           jParamExpr = &jevaluable;
@@ -695,16 +716,16 @@ struct TranslatorImpl {
     }
   }
 
-  Var _constructJAS(const String& expression, bool ignoreVariable = true) {
+  Var _constructJAS(const StringView& expression, bool ignoreVariable = true) {
     if (expression.empty()) {
-      return expression;
+      return String{expression};
     }
 
     if (isVariableLike(expression) && ignoreVariable) {
-      return expression;
+      return String{expression};
     }
 
-    auto increaseTillNotSpace = [](const String& s, size_t& currentPos,
+    auto increaseTillNotSpace = [](const StringView& s, size_t& currentPos,
                                    int step = 1) {
       while (::isspace(s[currentPos])) {
         if (currentPos == 0 && step < 0) {
@@ -717,9 +738,10 @@ struct TranslatorImpl {
     auto nextSpecifierPos = expression.find(':');
     if (nextSpecifierPos < expression.size()) {
       auto thisSpecifierEndPos = nextSpecifierPos - 1;
-
-      increaseTillNotSpace(expression, thisSpecifierEndPos, -1);
       ++nextSpecifierPos;
+      __jas_throw_if(SyntaxError, nextSpecifierPos >= expression.size(),
+                     "Invalid syntax: `", expression, "`");
+      increaseTillNotSpace(expression, thisSpecifierEndPos, -1);
       increaseTillNotSpace(expression, nextSpecifierPos);
       auto specifier = expression.substr(0, thisSpecifierEndPos + 1);
       auto inputExpr = expression.substr(nextSpecifierPos);
@@ -733,18 +755,18 @@ struct TranslatorImpl {
     increaseTillNotSpace(expression, b);
     increaseTillNotSpace(expression, e, -1);
     if ((e - b) == expression.size()) {
-      return expression;
+      return String{expression};
     } else if (b <= e) {
-      return expression.substr(b, e + 1);
+      return String{expression.substr(b, e + 1)};
     } else {
       return {};
     }
   }
 
-  Var constructJAS(const String& specifier, const String& expression) {
+  Var constructJAS(const StringView& specifier, const StringView& expression) {
     if (isVariableLike(specifier) || isSpecifierLike(specifier) ||
         isVariableLike(expression) || isSpecifierLike(expression)) {
-      return Var::dict({{specifier, _constructJAS(expression)}});
+      return Var::dict({{String{specifier}, _constructJAS(expression)}});
     }
     return {};
   }
@@ -761,9 +783,9 @@ struct TranslatorImpl {
     }
   }
 
-  Var constructJAS(const String& expression, const Var& jevaluable) {
+  Var constructJAS(const StringView& expression, const Var& jevaluable) {
     if (expression == keyword::noeval || isSpecifier(expression)) {
-      return Var::dict({{expression, jevaluable}});
+      return Var::dict({{String{expression}, jevaluable}});
     } else {
       auto tokens = split(expression, JASSTR(":"));
       if (!tokens.empty()) {
@@ -781,7 +803,7 @@ struct TranslatorImpl {
       }
     }
 
-    return Var::dict({{expression, jevaluable}});
+    return Var::dict({{String{expression}, jevaluable}});
   }
 
   EvaluablePtr translateEVBDict(Evaluable* parent, const Var& j) {
@@ -796,17 +818,12 @@ struct TranslatorImpl {
       LocalVariables stackVariables;
       extractLocalSymbols(this, evbDict.get(), j);
       for (auto& [key, jvalue] : j.asDict()) {
-        if (key == keyword::id) {
-          __jas_throw_if(SyntaxError, !jvalue.isString(),
-                         JASSTR("Following id specifier `"), key,
-                         JASSTR("` must be a string"));
-          evbDict->id = jvalue.asString();
-        } else if (!isVariableLike(key) && !isMacroLike(key)) {
+        if (!isVariableLike(key) && !isMacroLike(key)) {
           evbDict->value.emplace(key, translateImpl(evbDict.get(), jvalue));
         }
       }
 
-      if (!evbDict->hasLocalSymbols() && evbDict->id.empty() &&
+      if (!evbDict->hasLocalSymbols() &&
           std::all_of(std::begin(evbDict->value), std::end(evbDict->value),
                       [](auto&& e) { return isType<Constant>(e.second); })) {
         evb = makeConst(parent, j);

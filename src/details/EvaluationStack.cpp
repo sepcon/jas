@@ -39,13 +39,6 @@ void EvaluationStack::top(EvaluationFramePtr frame) { topFrame = move(frame); }
 
 void EvaluationStack::return_(Var val) { topFrame->returnedValue = move(val); }
 
-void EvaluationStack::return_(Var val, const UseStackEvaluable &ev) {
-  if (!ev.id.empty()) {
-    topFrame->context->putVariable(ev.id, val);
-  }
-  return_(move(val));
-}
-
 Var &EvaluationStack::returnedVal() { return topFrame->returnedValue; }
 
 Var EvaluationStack::takeReturnedVal() { return move(topFrame->returnedValue); }
