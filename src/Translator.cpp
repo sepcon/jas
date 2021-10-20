@@ -19,7 +19,7 @@
 
 namespace jas {
 
-#define JAS_REGEX_VARIABLE_NAME R"([\.\$a-zA-Z_][a-zA-Z_0-9]*)"
+#define JAS_REGEX_VARIABLE_NAME R"(\$?[\.a-zA-Z_][a-zA-Z_0-9]*)"
 #define JAS_REGEX_VARIABLE R"(\$)" JAS_REGEX_VARIABLE_NAME
 
 struct EvaluableInfo {

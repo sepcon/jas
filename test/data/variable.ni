@@ -15,3 +15,6 @@ null
 1
 "text:$variable:1"
 {"text": "1"}
+//check for global variable with prefix `.` `$$.tmp`
+{"1:@plus": [ 1, {"$$.tmp": 1, "@return": "$.tmp"} ], "2": "$.tmp" }
+{"1":2, "2":1}

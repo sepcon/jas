@@ -441,7 +441,8 @@ void SyntaxEvaluatorImpl::eval(const MacroFI& macro) {
   auto args = evalAndReturn(macro.param.get());
   assert((args.isNull() || args.isList()) &&
          "evaluated params must be null(aka void) or a list of arguments");
-  stack_->top()->context->args(args.isNull() ? ContextArguments{} : args);
+  stack_->top()->context->args(args.isNull() ? ContextArguments{}
+                                             : args.asList());
   stack_->return_(evalAndReturn(macro.macro.get()));
 }
 
