@@ -30,6 +30,11 @@ struct VariableEvalInfo {
   Type type;
 };
 
+class Macro {
+ public:
+  EvaluablePtr evb;
+};
+
 template <class _Evaluable>
 bool isType(const Evaluable* evb) {
   if (evb) {

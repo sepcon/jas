@@ -7,9 +7,10 @@
 
 namespace jas {
 
+class Macro;
 class Evaluable;
 using EvaluablePtr = std::shared_ptr<Evaluable>;
-using MacroPtr = EvaluablePtr;
+using MacroPtr = std::shared_ptr<Macro>;
 
 class Evaluable {
  public:

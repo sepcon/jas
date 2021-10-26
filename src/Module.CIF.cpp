@@ -5,6 +5,7 @@
 #include <ctime>
 #include <functional>
 #include <iomanip>
+#include <iostream>
 #include <map>
 
 #include "jas/FunctionModuleBaseT.h"
@@ -318,6 +319,11 @@ Var range(const Var& data) {
   return range;
 }
 
+Var cdebug(const Var& data) {
+  std::cout << "[DEBUG]: " << data.dump() << std::endl;
+  return {};
+}
+
 class CIFModule : public FunctionModuleBaseT<JasUtilityFunction> {
  public:
   String moduleName() const override { return {}; }
@@ -346,6 +352,7 @@ class CIFModule : public FunctionModuleBaseT<JasUtilityFunction> {
         {JASSTR("not_empty"), not_empty},
         {JASSTR("abs"), abs},
         {JASSTR("range"), range},
+        {JASSTR("cdebug"), cdebug},
     };
     return _;
   }

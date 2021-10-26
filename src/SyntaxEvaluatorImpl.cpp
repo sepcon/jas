@@ -443,7 +443,7 @@ void SyntaxEvaluatorImpl::eval(const MacroFI& macro) {
          "evaluated params must be null(aka void) or a list of arguments");
   stack_->top()->context->args(args.isNull() ? ContextArguments{}
                                              : args.asList());
-  stack_->return_(evalAndReturn(macro.macro.get()));
+  stack_->return_(evalAndReturn(macro.macro->evb.get()));
 }
 
 void SyntaxEvaluatorImpl::eval(const ObjectPropertyQuery& query) {

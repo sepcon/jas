@@ -19,4 +19,8 @@
 {"!sort_const:@list.sort":"$*", "@sort_const": [3,2,1]}
 0
 [1,2,3]
-
+// for this case, a print will be evaluated first due to alphabet order, then make sure
+// symbol hello can be resolved well
+{"!hello":[1,2,3],"!aprint":"@hello","@aprint":""}
+null
+[1,2,3]

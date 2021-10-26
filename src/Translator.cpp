@@ -15,12 +15,15 @@
 #include "jas/Keywords.h"
 #include "jas/Module.CIF.h"
 #include "jas/ModuleManager.h"
+#include "jas/String.h"
 #include "jas/Version.h"
 
 namespace jas {
 
-#define JAS_REGEX_VARIABLE_NAME R"(\$?[\.a-zA-Z_][a-zA-Z_0-9]*)"
+#define JAS_REGEX_SYMBOL_NAME R"([a-zA-Z_][a-zA-Z_0-9]*)"
+#define JAS_REGEX_VARIABLE_NAME R"(\$?[\.]?)" JAS_REGEX_SYMBOL_NAME
 #define JAS_REGEX_VARIABLE R"(\$)" JAS_REGEX_VARIABLE_NAME
+#define JAS_REGEX_SPECIFIER_NAME JAS_REGEX_SYMBOL_NAME
 
 struct EvaluableInfo {
   String type;
@@ -85,10 +88,15 @@ struct TranslatorImpl {
     return specifiers.find(kw) != std::end(specifiers);
   }
 
-  static bool isValidVariableName(const StringView& varname) {
-    static auto varregex = Regex(JAS_REGEX_VARIABLE_NAME);
-    return std::regex_match(varname.begin(), varname.end(), varregex);
+#define __JAS_DEFINE_REGEX_VALIDATE_FUNC(Func, RE)                     \
+  static bool Func(const StringView& varname) {                        \
+    static auto varregex = Regex(RE);                                  \
+    return std::regex_match(varname.begin(), varname.end(), varregex); \
   }
+  __JAS_DEFINE_REGEX_VALIDATE_FUNC(isValidVariableName,
+                                   JAS_REGEX_VARIABLE_NAME);
+
+  __JAS_DEFINE_REGEX_VALIDATE_FUNC(isValidSymbolName, JAS_REGEX_SYMBOL_NAME);
 
   bool isSpecifier(const StringView& str) const {
     return !str.empty() &&
@@ -152,25 +160,44 @@ struct TranslatorImpl {
         VariableEvalInfo{translator->translateImpl(parent, evbExpr), type});
   }
 
-  static void translateMacro(TranslatorImpl* translator,
-                             UseStackEvaluable* parent, const String& key,
-                             const Var& evbExpr) {
+  struct DelayedTranslatedMacro {
+    MacroPtr macro;
+    Var evbExpr;
+  };
+
+  using DelayedTranslatedMacros = std::vector<DelayedTranslatedMacro>;
+  static DelayedTranslatedMacro translateMacro(TranslatorImpl* translator,
+                                               UseStackEvaluable* parent,
+                                               const String& key,
+                                               const Var& evbExpr) {
+    __jas_throw_if(SyntaxError, !isValidSymbolName(StringView{key.c_str() + 1,
+                                                              key.size() - 1}));
+
     if (!parent->localMacros) {
       parent->localMacros = make_shared<LocalMacrosMap>();
     }
-    parent->localMacros->emplace(key.substr(1),
-                                 translator->translateImpl(parent, evbExpr));
+
+    auto macro = make_shared<Macro>();
+    parent->localMacros->emplace(key.substr(1), macro);
+    return DelayedTranslatedMacro{move(macro), evbExpr};
   }
 
   static void extractLocalSymbols(TranslatorImpl* translator,
                                   UseStackEvaluable* currentEvb, const Var& j) {
     if (j.isDict()) {
+      DelayedTranslatedMacros delayedMacros;
       for (auto& [key, val] : j.asDict()) {
         if (!isMacroLike(key)) {
           continue;
         }
-        translateMacro(translator, currentEvb, key, val);
+        delayedMacros.push_back(
+            translateMacro(translator, currentEvb, key, val));
       }
+
+      for (auto& dm : delayedMacros) {
+        dm.macro->evb = translator->translateImpl(currentEvb, dm.evbExpr);
+      }
+
       for (auto& [key, val] : j.asDict()) {
         if (!(isVariableLike(key) && key.size() > 1)) {
           continue;
