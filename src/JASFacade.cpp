@@ -64,6 +64,12 @@ Var JASFacade::evaluate(const Json &jasExpr, EvalContextPtr context) {
   return evaluate();
 }
 
+Var JASFacade::evaluate(EvaluablePtr evb, EvalContextPtr context) {
+  d_->context = move(context);
+  d_->evaluable = move(evb);
+  return evaluate();
+}
+
 Var JASFacade::evaluate() {
   assert(d_->evaluable);
   if (!d_->context) {

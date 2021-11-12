@@ -121,12 +121,16 @@ struct EvaluableDict : public UseStackEvaluableT<EvaluableDict> {
   String typeID() const override { return "dict"; }
 };
 
-struct EvaluableList : public StacklessEvaluableT<EvaluableList> {
+struct EvaluableList : public UseStackEvaluableT<EvaluableList> {
   using ValueType = std::vector<EvaluablePtr>;
-  using _Base = StacklessEvaluableT<EvaluableList>;
+  using __Base = UseStackEvaluableT<EvaluableList>;
   EvaluableList(Evaluable* parent, ValueType v = {})
-      : _Base(parent), value{std::move(v)} {}
+      : __Base(parent, LocalVariablesPtr{}), value{std::move(v)} {}
   ValueType value;
+
+  // UseStackEvaluable interface
+ public:
+  String typeID() const override { return "list"; }
 };
 
 template <class _SubType, class _Type>

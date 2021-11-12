@@ -6,6 +6,7 @@
 #include <regex>
 #include <set>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "jas/EvalContextIF.h"
@@ -160,11 +161,7 @@ struct TranslatorImpl {
         VariableEvalInfo{translator->translateImpl(parent, evbExpr), type});
   }
 
-  struct DelayedTranslatedMacro {
-    MacroPtr macro;
-    Var evbExpr;
-  };
-
+  using DelayedTranslatedMacro = std::pair<MacroPtr, Var>;
   using DelayedTranslatedMacros = std::vector<DelayedTranslatedMacro>;
   static DelayedTranslatedMacro translateMacro(TranslatorImpl* translator,
                                                UseStackEvaluable* parent,
@@ -179,7 +176,7 @@ struct TranslatorImpl {
 
     auto macro = make_shared<Macro>();
     parent->localMacros->emplace(key.substr(1), macro);
-    return DelayedTranslatedMacro{move(macro), evbExpr};
+    return std::make_pair(move(macro), evbExpr);
   }
 
   static void extractLocalSymbols(TranslatorImpl* translator,
@@ -194,8 +191,8 @@ struct TranslatorImpl {
             translateMacro(translator, currentEvb, key, val));
       }
 
-      for (auto& dm : delayedMacros) {
-        dm.macro->evb = translator->translateImpl(currentEvb, dm.evbExpr);
+      for (auto& [macro, expr] : delayedMacros) {
+        macro->evb = translator->translateImpl(currentEvb, expr);
       }
 
       for (auto& [key, val] : j.asDict()) {

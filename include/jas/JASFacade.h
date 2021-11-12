@@ -15,8 +15,8 @@ class JASFacade {
   JASFacade(const Json& jasExpr, EvalContextPtr context);
   ~JASFacade();
   Var evaluate(const Json& jasExpr, EvalContextPtr context);
+  Var evaluate(EvaluablePtr evb, EvalContextPtr context);
   Var evaluate();
-
   // For evaluating other context/expression
   void setContext(EvalContextPtr context) noexcept;
   void setExpression(const Json& jasExpr);
