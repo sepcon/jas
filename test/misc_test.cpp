@@ -76,7 +76,7 @@ struct OperationPathValidator : public SymbolPathValidator<StringView> {
 
 int main() {
   BasicPathView<':', OperationPathValidator> pathcollon =
-      "::@hello:[@field:hello/]:con:::";
+      JASSTR("::@hello:[@field:hello/]:con:::");
 
   for (auto it = pathcollon.begin(); it != pathcollon.end(); ++it) {
     cloginfo() << *it;

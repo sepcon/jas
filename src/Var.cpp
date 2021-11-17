@@ -26,28 +26,28 @@ using Ref = Var::Ref;
 enum class VarTypeIdx : size_t { VAR_POSIB_TYPES };
 
 static constexpr const CharType *indexToType(VarTypeIdx idx) {
-  const CharType *ret = "";
+  const CharType *ret = JASSTR("");
   switch (idx) {
     case jas::VarTypeIdx::Bool:
-      ret = "Boolean";
+      ret = JASSTR("Boolean");
       break;
     case jas::VarTypeIdx::Number:
-      ret = "Number";
+      ret = JASSTR("Number");
       break;
     case jas::VarTypeIdx::String:
-      ret = "String";
+      ret = JASSTR("String");
       break;
     case jas::VarTypeIdx::List:
-      ret = "List";
+      ret = JASSTR("List");
       break;
     case jas::VarTypeIdx::Dict:
-      ret = "Dict";
+      ret = JASSTR("Dict");
       break;
     case jas::VarTypeIdx::Ref:
-      ret = "Ref";
+      ret = JASSTR("Ref");
       break;
     case VarTypeIdx::Null:
-      ret = "Null";
+      ret = JASSTR("Null");
       break;
   }
   return ret;
@@ -84,15 +84,21 @@ struct Var::ValueType : public ValueTypeBase {
 
 template <class _NumberType>
 static std::optional<_NumberType> _toNumber(const StringView &snum) {
-  _NumberType out;
-  const std::from_chars_result result =
-      std::from_chars(snum.data(), snum.data() + snum.size(), out);
-  if (result.ec == std::errc::invalid_argument ||
-      result.ec == std::errc::result_out_of_range) {
-    return std::nullopt;
+  try {
+    return std::stoi(snum);
+  } catch (const std::exception &) {
+    return
   }
 
-  return out;
+  //  _NumberType out;
+  //  const std::from_chars_result result =
+  //      std::from_chars(snum.data(), snum.data() + snum.size(), out);
+  //  if (result.ec == std::errc::invalid_argument ||
+  //      result.ec == std::errc::result_out_of_range) {
+  //    return std::nullopt;
+  //  }
+
+  //  return out;
 }
 
 template <class _Var, class _Iterator>
@@ -109,19 +115,18 @@ static _Var *_find(_Var *j, _Iterator beg, _Iterator end) {
         break;
       }
     } else if (j->isList()) {
-      auto optIdx = _toNumber<size_t>(*beg);
-      if (!optIdx) {
+      try {
+        auto idx = std::stoul(String{*beg});
+        auto &thelist = j->asList();
+        if (idx >= thelist.size()) {
+          j = nullptr;
+          break;
+        }
+        j = &(thelist[idx]);
+      } catch (const std::exception &) {
         j = nullptr;
         break;
       }
-      auto idx = optIdx.value();
-
-      auto &thelist = j->asList();
-      if (idx >= thelist.size()) {
-        j = nullptr;
-        break;
-      }
-      j = &(thelist[idx]);
     } else {
       j = nullptr;
       break;

@@ -320,7 +320,7 @@ Var range(const Var& data) {
 }
 
 Var cdebug(const Var& data) {
-  std::cout << "[DEBUG]: " << data.dump() << std::endl;
+  std::cout << "[DEBUG]: " << data.dump().c_str() << std::endl;
   return {};
 }
 
