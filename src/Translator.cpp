@@ -21,9 +21,9 @@
 
 namespace jas {
 
-#define JAS_REGEX_SYMBOL_NAME R"([a-zA-Z_][a-zA-Z_0-9]*)"
-#define JAS_REGEX_VARIABLE_NAME R"(\$?[\.]?)" JAS_REGEX_SYMBOL_NAME
-#define JAS_REGEX_VARIABLE R"(\$)" JAS_REGEX_VARIABLE_NAME
+#define JAS_REGEX_SYMBOL_NAME JASSTR(R"([a-zA-Z_][a-zA-Z_0-9]*)")
+#define JAS_REGEX_VARIABLE_NAME JASSTR(R"(\$?[\.]?)") JAS_REGEX_SYMBOL_NAME
+#define JAS_REGEX_VARIABLE JASSTR(R"(\$)") JAS_REGEX_VARIABLE_NAME
 #define JAS_REGEX_SPECIFIER_NAME JAS_REGEX_SYMBOL_NAME
 
 struct EvaluableInfo {
@@ -614,7 +614,12 @@ struct TranslatorImpl {
               !std::all_of(objName.begin() + 1, objName.end(), ::isdigit),
           "Variable name must not prefix by a number: `$", objName, "`");
       // for case of lookup function's argument
-      auto argPos = std::atoi(objName.data());
+      int argPos = std::numeric_limits<uint8_t>::max();
+      try {
+        argPos = std::stoi(objName);
+      } catch (const std::exception&) {
+        __jas_throw(SyntaxError, "Invalid symbol name: ", objName);
+      }
       __jas_throw_if(SyntaxError, argPos > std::numeric_limits<uint8_t>::max(),
                      "Exeeds limit functions arguments index: `$", objName,
                      "`");
@@ -629,7 +634,7 @@ struct TranslatorImpl {
       return makeCtxtArgInfo(parent, ContextArgumentsInfo::Type::Args);
     } else {
       using namespace std;
-      static const char PRESERVED_CHARS[] = JASSTR("!`+-*&^%$#@/\\';,=");
+      static const CharType PRESERVED_CHARS[] = JASSTR("!`+-*&^%$#@/\\';,=");
       auto prefixedWithPreservedChar =
           std::find(begin(PRESERVED_CHARS), end(PRESERVED_CHARS),
                     objNamePrefix) != end(PRESERVED_CHARS) &&

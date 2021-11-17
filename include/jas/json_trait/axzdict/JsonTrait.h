@@ -50,7 +50,6 @@ struct _TraitImpl<_string, _allow_if_constructible_t<String, _string>> {
   static Json makeJson(_string v) { return Json(std::move(v)); }
 };
 
-
 }  // namespace __details
 
 struct JsonTrait {
@@ -158,9 +157,9 @@ struct JsonTrait {
     return iteratedAll;
   }
 
-  static Json object(axz_dict_object in = {}) { return in; }
+  static Json object(axz_dict_object in = {}) { return std::move(in); }
 
-  static Json array(axz_dict_array in = {}) { return in; }
+  static Json array(axz_dict_array in = {}) { return std::move(in); }
 
   static Json parse(const String& s) {
     Json j;

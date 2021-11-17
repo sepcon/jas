@@ -118,7 +118,7 @@ struct EvaluableDict : public UseStackEvaluableT<EvaluableDict> {
 
   // UseStackEvaluable interface
  public:
-  String typeID() const override { return "dict"; }
+  String typeID() const override { return JASSTR("dict"); }
 };
 
 struct EvaluableList : public UseStackEvaluableT<EvaluableList> {
