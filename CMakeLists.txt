@@ -82,6 +82,7 @@ add_library(jas
     )
 
 add_subdirectory(test)
+add_subdirectory(soh_eval)
 include(pch.cmake)
 target_precompile_headers(jas PRIVATE ${JAS_PRECOMPILE_HEADERS})
 
