@@ -133,8 +133,8 @@ EvalContextPtr HistoricalEvalContext::subContext(const String& ctxtID,
 }
 
 bool HistoricalEvalContext::hasData() const {
-  return std::any_of(std::begin(args_), std::end(args_),
-                     [](auto& sn) { return !sn.isNull(); });
+  return !args_.empty();  // std::any_of(std::begin(args_), std::end(args_),
+                          // [](auto& sn) { return !sn.isNull(); });
 }
 
 HistoricalEvalContext* HistoricalEvalContext::parent() const {

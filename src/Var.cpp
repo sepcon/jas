@@ -82,24 +82,6 @@ struct Var::ValueType : public ValueTypeBase {
 #undef __var_get_impl
 };
 
-template <class _NumberType>
-static std::optional<_NumberType> _toNumber(const StringView &snum) {
-  try {
-    return std::stoi(snum);
-  } catch (const std::exception &) {
-    return
-  }
-
-  //  _NumberType out;
-  //  const std::from_chars_result result =
-  //      std::from_chars(snum.data(), snum.data() + snum.size(), out);
-  //  if (result.ec == std::errc::invalid_argument ||
-  //      result.ec == std::errc::result_out_of_range) {
-  //    return std::nullopt;
-  //  }
-
-  //  return out;
-}
 
 template <class _Var, class _Iterator>
 static _Var *_find(_Var *j, _Iterator beg, _Iterator end) {
